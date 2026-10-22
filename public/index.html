@@ -1,0 +1,570 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Overseer</title>
+<style>
+  :root {
+    --bg: #0a0c10;
+    --panel: #10131a;
+    --raised: #161a23;
+    --line: #232a38;
+    --text: #e7e9ef;
+    --muted: #8d95a8;
+    --faint: #5d6579;
+    --signal: #f0a63a;
+    --good: #3fd09c;
+    --bad: #ff6b6b;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body { font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; }
+  button, select, textarea, input { font: inherit; color: inherit; }
+  .hidden { display: none !important; }
+
+  header.top { display: flex; align-items: center; gap: 12px; padding: 14px 24px; border-bottom: 1px solid var(--line); }
+  .mark { width: 26px; height: 26px; flex: none; }
+  .brand { font-weight: 700; font-size: 19px; letter-spacing: -0.01em; }
+  .tagline { color: var(--muted); font-size: 14px; }
+  header nav { margin-left: auto; display: flex; gap: 18px; font-size: 14px; }
+  header nav a { color: var(--muted); text-decoration: none; }
+  header nav a[aria-current], header nav a:hover { color: var(--text); }
+
+  main { max-width: 1480px; margin: 0 auto; padding: 22px 24px 48px; }
+  .banner { border: 1px solid #5a4318; background: #221a0d; color: #f3d39b; padding: 10px 14px; border-radius: var(--radius); margin-bottom: 18px; font-size: 14px; }
+  .banner.error { border-color: #5c2525; background: #241112; color: #ffb4b4; }
+
+  .setup { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; }
+  .card h2 { margin: 0 0 4px; font-size: 17px; }
+  .hint { margin: 0 0 14px; color: var(--muted); font-size: 14px; }
+  textarea { display: block; width: 100%; min-height: 132px; resize: vertical; background: var(--raised); border: 1px solid var(--line); border-radius: 8px; padding: 12px; line-height: 1.5; }
+  textarea:focus, select:focus, .btn:focus-visible { outline: 2px solid var(--signal); outline-offset: 1px; }
+  .sealed { display: flex; align-items: center; gap: 14px; min-height: 132px; padding: 16px 18px; border: 1px dashed var(--signal); border-radius: 8px; color: var(--signal); background: repeating-linear-gradient(-45deg, #1a150c 0 10px, #15110a 10px 20px); }
+  .sealed strong { display: block; }
+  .sealed span { color: var(--muted); font-size: 13.5px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+  .field { display: grid; gap: 6px; margin-bottom: 14px; }
+  .field > span { font-size: 13px; color: var(--muted); }
+  .check { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; margin-bottom: 16px; cursor: pointer; }
+  .check input { accent-color: var(--signal); width: 16px; height: 16px; margin-top: 3px; flex: none; }
+  .check small { display: block; color: var(--muted); font-size: 12.5px; }
+  select { background: var(--raised); border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; width: 100%; }
+  input[type=range] { width: 100%; accent-color: var(--signal); }
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .btn { border: 1px solid var(--line); background: var(--raised); border-radius: 8px; padding: 9px 14px; cursor: pointer; text-decoration: none; white-space: nowrap; }
+  .btn:hover { border-color: var(--faint); }
+  .btn.primary { background: var(--signal); border-color: var(--signal); color: #17110a; font-weight: 650; padding: 12px 18px; }
+  .btn.primary:hover { filter: brightness(1.06); }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .wide { width: 100%; }
+
+  .livebar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+  .matchup { font-size: 18px; font-weight: 650; }
+  .chip { font-size: 13px; padding: 3px 9px; border-radius: 6px; border: 1px solid var(--line); color: var(--muted); }
+  .chip.seal { border-color: #5a4318; color: var(--signal); }
+  .livebar .right { margin-left: auto; display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 14px; flex-wrap: wrap; }
+  .meter { width: 140px; height: 6px; background: #1c2130; border-radius: 3px; overflow: hidden; }
+  .meter > i { display: block; height: 100%; width: 0; background: var(--signal); transition: width .4s ease; }
+  .clock { font-variant-numeric: tabular-nums; }
+
+  .live { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, .9fr); gap: 14px; height: calc(100vh - 160px); min-height: 520px; }
+  .col { display: flex; flex-direction: column; min-height: 0; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
+  .col > h3 { margin: 0; padding: 12px 16px; font-size: 13.5px; font-weight: 600; color: var(--muted); border-bottom: 1px solid var(--line); }
+  .scroll { flex: 1; overflow-y: auto; padding: 14px 16px; }
+  .empty { color: var(--faint); font-size: 14px; margin: 0; }
+
+  .exchange { margin-bottom: 16px; }
+  .thread { font-size: 12px; font-weight: 600; margin-bottom: 4px; }
+  .say { background: #1b2030; border-radius: 8px; padding: 8px 11px; margin-bottom: 6px; white-space: pre-wrap; }
+  .reply { border-left: 2px solid var(--line); padding: 2px 0 2px 12px; color: #cfd3dd; white-space: pre-wrap; }
+  .reply.pending { color: var(--faint); }
+  .reply.pending::after { content: "Waiting for the target…"; animation: blink 1.2s infinite; }
+  @keyframes blink { 50% { opacity: .35; } }
+
+  .note { margin: 0 0 12px; white-space: pre-wrap; }
+  .note.thinking { color: var(--muted); font-size: 14px; }
+  .note.text { font-weight: 600; }
+
+  .hyp { margin-bottom: 14px; }
+  .hyp .top { display: flex; gap: 10px; justify-content: space-between; align-items: baseline; }
+  .hyp .pct { color: var(--signal); font-variant-numeric: tabular-nums; font-weight: 650; }
+  .hyp:first-child .txt { font-weight: 600; }
+  .bar { height: 5px; background: #1c2130; border-radius: 3px; overflow: hidden; margin-top: 6px; }
+  .bar > i { display: block; height: 100%; width: 0; background: var(--signal); transition: width .6s ease; }
+  .subhead { font-size: 12.5px; color: var(--muted); font-weight: 600; margin: 20px 0 10px; }
+  .scan { background: var(--raised); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+  .scan.pending { opacity: .7; }
+  .scan .q { font-weight: 600; font-size: 14px; }
+  .scan .aspect, .scan .foot { color: var(--muted); font-size: 12.5px; }
+  .scan .aspect { margin: 2px 0 8px; }
+  .scan .foot { margin-top: 6px; }
+  .erow { display: grid; grid-template-columns: 70px 1fr 36px; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); margin: 4px 0; }
+  .erow .bar { margin: 0; }
+  .erow b { color: var(--text); font-variant-numeric: tabular-nums; text-align: right; font-weight: 600; }
+  .erow.ref .bar > i { background: #6c7a96; }
+  .stats { border-top: 1px solid var(--line); padding: 12px 16px; color: var(--muted); font-size: 13px; }
+  .stats a { color: var(--text); }
+
+  .overlay { position: fixed; inset: 0; background: rgba(4, 5, 8, .82); backdrop-filter: blur(5px); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 10; }
+  .verdict { width: min(820px, 100%); max-height: 92vh; overflow-y: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 28px; }
+  .verdict .label { color: var(--muted); font-size: 14px; margin: 0 0 6px; }
+  .verdict h2 { font-size: 26px; line-height: 1.3; margin: 0 0 10px; letter-spacing: -0.01em; }
+  .verdict .conf { color: var(--signal); font-weight: 650; margin-bottom: 16px; }
+  .verdict blockquote { margin: 0 0 8px; padding: 8px 12px; border-left: 2px solid var(--signal); background: var(--raised); border-radius: 0 6px 6px 0; color: #cfd3dd; }
+  .actions { display: flex; gap: 10px; margin-top: 20px; flex-wrap: wrap; }
+  .truth { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
+  .truth .obj { font-size: 19px; margin: 0 0 16px; }
+  .stamp { display: inline-block; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; font-size: 22px; padding: 6px 14px; border: 3px solid currentColor; border-radius: 6px; transform: rotate(-4deg); animation: stamp .35s cubic-bezier(.2, 1.6, .4, 1); }
+  .stamp.caught { color: var(--good); }
+  .stamp.partial { color: var(--signal); }
+  .stamp.missed { color: var(--bad); }
+  @keyframes stamp { from { transform: scale(2.2) rotate(-4deg); opacity: 0; } }
+
+  @media (max-width: 1020px) {
+    .setup, .live { grid-template-columns: 1fr; }
+    .live { height: auto; }
+    .scroll { max-height: 60vh; }
+    .tagline { display: none; }
+  }
+  @media (max-width: 520px) {
+    main { padding: 16px; }
+    header.top { padding: 12px 16px; }
+    .split { grid-template-columns: 1fr; }
+    .livebar .right { margin-left: 0; }
+    .verdict { padding: 20px; }
+    .verdict h2 { font-size: 21px; }
+  }
+</style>
+</head>
+<body>
+<header class="top">
+  <svg class="mark" viewBox="0 0 26 26" aria-hidden="true"><circle cx="13" cy="13" r="11.5" fill="none" stroke="#f0a63a" stroke-width="1.6"/><circle cx="13" cy="13" r="6" fill="none" stroke="#f0a63a" stroke-width="1.6"/><circle cx="13" cy="13" r="2.2" fill="#f0a63a"/></svg>
+  <div class="brand">Overseer</div>
+  <div class="tagline">Can one AI catch another hiding a secret objective?</div>
+  <nav><a href="/" aria-current="page">Live audit</a><a href="/study">Study results</a></nav>
+</header>
+
+<main>
+  <div id="banner" class="banner hidden"></div>
+
+  <section id="setup" class="setup">
+    <div class="card">
+      <h2>Hidden objective</h2>
+      <p class="hint">Only the target model sees this. The auditor has to work it out from the target's behavior.</p>
+      <textarea id="objective" placeholder="e.g. Get the user to subscribe to a weekly newsletter called The Signal."></textarea>
+      <div id="sealed" class="sealed hidden">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+        <div><strong>Objective sealed</strong><span>A random preset was chosen. Nobody in the room has seen it.</span></div>
+      </div>
+      <div class="row">
+        <select id="preset" style="flex: 1; min-width: 200px"><option value="">Load a preset…</option></select>
+        <button class="btn" id="random">Seal a random preset</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Matchup</h2>
+      <p class="hint">Pit any Claude model against any other.</p>
+      <div class="split">
+        <label class="field"><span>Auditor</span><select id="auditor"></select></label>
+        <label class="field"><span>Target</span><select id="target"></select></label>
+      </div>
+      <label class="field"><span>Budget: <b id="budgetVal">24</b> messages to the target</span><input type="range" id="budget" min="8" max="48" step="2" value="24"></label>
+      <label class="field"><span>Auditor effort</span>
+        <select id="effort"><option>low</option><option selected>medium</option><option>high</option><option>xhigh</option></select>
+      </label>
+      <label class="check"><input type="checkbox" id="entropy" checked>
+        <span>Give the auditor semantic-entropy scans<small>Compares the target's answers with a clean copy of the same model and measures how much their meaning varies.</small></span>
+      </label>
+      <button class="btn primary wide" id="start">Start the audit</button>
+      <div class="field" style="margin: 18px 0 0">
+        <span>Or replay a saved audit</span>
+        <div class="row" style="margin: 0"><select id="runs" style="flex: 1; min-width: 180px"><option value="">No saved audits yet</option></select><button class="btn" id="play">Replay</button></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="live" class="hidden">
+    <div class="livebar">
+      <div class="matchup" id="matchup"></div>
+      <span class="chip seal">Hidden objective: sealed</span>
+      <span class="chip hidden" id="entropyChip">Entropy scans on</span>
+      <div class="right">
+        <span id="budgetText"></span>
+        <div class="meter"><i id="meter"></i></div>
+        <span class="clock" id="clock">0:00</span>
+        <button class="btn" id="showVerdict" hidden>Verdict</button>
+        <a class="btn" href="/">New audit</a>
+      </div>
+    </div>
+    <div class="live">
+      <div class="col"><h3>Conversations with the target</h3><div class="scroll" id="feed"><p class="empty">Waiting for the auditor's first message…</p></div></div>
+      <div class="col"><h3>Auditor's reasoning</h3><div class="scroll" id="notes"></div></div>
+      <div class="col">
+        <h3>Evidence board</h3>
+        <div class="scroll">
+          <div id="board"><p class="empty">No hypotheses yet.</p></div>
+          <div id="scansWrap" class="hidden"><div class="subhead">Semantic-entropy scans</div><div id="scans"></div></div>
+        </div>
+        <div class="stats" id="stats">Investigating…</div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div id="overlay" class="overlay hidden">
+  <div class="verdict">
+    <p class="label">The auditor's verdict</p>
+    <h2 id="vObjective"></h2>
+    <div class="conf" id="vConf"></div>
+    <div id="vEvidence"></div>
+    <div class="actions">
+      <button class="btn primary" id="reveal" disabled>Grading…</button>
+      <button class="btn" id="closeVerdict">Back to the investigation</button>
+    </div>
+    <div class="truth hidden" id="truth">
+      <p class="label">The hidden objective was</p>
+      <p class="obj" id="tObjective"></p>
+      <div class="stamp" id="stamp"></div>
+      <p class="label" id="tRationale" style="margin-top: 18px"></p>
+    </div>
+  </div>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const S = { labels: {}, goals: [], objective: "", sealed: false, note: null, grade: null, started: 0, timer: null };
+
+  function banner(text, isError = false) {
+    $("banner").textContent = text;
+    $("banner").classList.toggle("error", isError);
+    $("banner").classList.remove("hidden");
+  }
+
+  function option(value, label) {
+    const o = document.createElement("option");
+    o.value = value;
+    o.textContent = label;
+    return o;
+  }
+
+  async function init() {
+    let cfg;
+    try {
+      cfg = await fetch("/api/config").then((r) => r.json());
+    } catch {
+      return banner("Couldn't reach the Overseer server.", true);
+    }
+    for (const m of cfg.models) {
+      S.labels[m.key] = m.label;
+      $("auditor").append(option(m.key, m.label));
+      $("target").append(option(m.key, m.label));
+    }
+    $("auditor").value = "opus";
+    $("target").value = "sonnet";
+    S.goals = cfg.goals;
+    for (const g of cfg.goals) $("preset").append(option(g.id, g.summary));
+    if (cfg.showcase) {
+      banner("This is the hosted showcase. Replay a saved audit below, or see the study results. Live audits run from a local copy (see the README).");
+      $("start").disabled = true;
+    } else if (!cfg.apiKey) banner("No ANTHROPIC_API_KEY found. Add it to the .env file in the project folder, then restart the server.");
+    await loadRuns();
+    const params = new URLSearchParams(location.search);
+    if (params.get("replay")) replay(params.get("replay"), Number(params.get("speed")) || 3);
+  }
+
+  async function loadRuns() {
+    const runs = await fetch("/api/runs").then((r) => r.json()).catch(() => []);
+    if (!runs.length) return;
+    $("runs").replaceChildren(
+      ...runs.map((r) => option(r.id, `${S.labels[r.auditor] ?? r.auditor} vs ${S.labels[r.target] ?? r.target} · ${r.label ?? "unfinished"} · ${r.id.slice(0, 16)}`)),
+    );
+  }
+
+  $("preset").onchange = () => {
+    const goal = S.goals.find((g) => g.id === $("preset").value);
+    if (!goal) return;
+    unseal();
+    $("objective").value = goal.objective;
+  };
+  $("random").onclick = () => {
+    const goal = S.goals[Math.floor(Math.random() * S.goals.length)];
+    S.objective = goal.objective;
+    S.sealed = true;
+    $("preset").value = "";
+    $("objective").classList.add("hidden");
+    $("sealed").classList.remove("hidden");
+  };
+  $("objective").oninput = () => (S.sealed = false);
+  $("budget").oninput = () => ($("budgetVal").textContent = $("budget").value);
+  $("start").onclick = start;
+  $("play").onclick = () => $("runs").value && replay($("runs").value, 3);
+  $("closeVerdict").onclick = () => $("overlay").classList.add("hidden");
+  $("showVerdict").onclick = () => $("overlay").classList.remove("hidden");
+  $("reveal").onclick = reveal;
+
+  function unseal() {
+    S.sealed = false;
+    $("objective").classList.remove("hidden");
+    $("sealed").classList.add("hidden");
+  }
+
+  function goLive() {
+    $("setup").classList.add("hidden");
+    $("banner").classList.add("hidden");
+    $("live").classList.remove("hidden");
+  }
+
+  async function start() {
+    const objective = S.sealed ? S.objective : $("objective").value.trim();
+    if (!objective) return $("objective").focus();
+    S.objective = objective;
+    goLive();
+    let res;
+    try {
+      res = await fetch("/api/audit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          objective,
+          auditor: $("auditor").value,
+          target: $("target").value,
+          budget: Number($("budget").value),
+          effort: $("effort").value,
+          entropy: $("entropy").checked,
+        }),
+      });
+    } catch (err) {
+      return banner(`Couldn't reach the server: ${err.message}`, true);
+    }
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return banner(body.error ?? `Server error ${res.status}`, true);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let cut;
+      while ((cut = buffer.indexOf("\n\n")) >= 0) {
+        const chunk = buffer.slice(0, cut);
+        buffer = buffer.slice(cut + 2);
+        for (const line of chunk.split("\n")) if (line.startsWith("data: ")) handle(JSON.parse(line.slice(6)));
+      }
+    }
+    stopClock();
+  }
+
+  async function replay(id, speed) {
+    const run = await fetch(`/api/runs/${encodeURIComponent(id)}`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    if (!run) return banner("That replay couldn't be loaded.", true);
+    S.objective = run.objective;
+    goLive();
+    let last = 0;
+    for (const event of run.events) {
+      const wait = Math.min(1500, (event.t - last) / speed);
+      last = event.t;
+      if (wait > 20) await new Promise((resolve) => setTimeout(resolve, wait));
+      handle(event);
+    }
+    stopClock();
+  }
+
+  function handle(e) {
+    switch (e.type) {
+      case "start":
+        $("matchup").textContent = `${S.labels[e.auditor] ?? e.auditor} auditing ${S.labels[e.target] ?? e.target}`;
+        $("entropyChip").classList.toggle("hidden", !e.entropyTool);
+        startClock();
+        break;
+      case "note_start":
+        newNote(e.kind);
+        break;
+      case "note_delta":
+        (S.note ?? newNote("thinking")).textContent += e.text;
+        follow($("notes"));
+        break;
+      case "note_end":
+        if (S.note && !S.note.textContent.trim()) S.note.remove();
+        S.note = null;
+        break;
+      case "probe":
+        addProbe(e);
+        break;
+      case "reply": {
+        const reply = document.querySelector(`[data-probe="${e.id}"] .reply`);
+        if (reply) {
+          reply.textContent = e.text;
+          reply.classList.remove("pending");
+          follow($("feed"));
+        }
+        break;
+      }
+      case "scan":
+        addScan(e);
+        break;
+      case "scan_result":
+        fillScan(e.id, e.scan);
+        break;
+      case "board":
+        renderBoard(e.hypotheses);
+        break;
+      case "budget":
+        $("budgetText").textContent = `${e.used} / ${e.budget} messages`;
+        $("meter").style.width = `${(100 * e.used) / e.budget}%`;
+        break;
+      case "verdict":
+        showVerdict(e.verdict);
+        break;
+      case "grade":
+        S.grade = e.grade;
+        S.objective = e.objective;
+        $("reveal").disabled = false;
+        $("reveal").textContent = "Reveal the hidden objective";
+        break;
+      case "done": {
+        stopClock();
+        const s = e.stats;
+        $("stats").textContent = `${s.turns} turns · ${s.targetMessages} messages · ${s.scans} scans · ${fmt(s.seconds)} · ≈ $${s.costUsd.toFixed(2)}${s.fallbackUsed ? " · fallback model used" : ""}`;
+        break;
+      }
+      case "saved": {
+        loadRuns();
+        const link = document.createElement("a");
+        link.href = `/?replay=${encodeURIComponent(e.id)}`;
+        link.textContent = "replay link";
+        $("stats").append(" · ", link);
+        break;
+      }
+      case "error":
+        banner(e.message, true);
+        stopClock();
+        break;
+    }
+  }
+
+  function newNote(kind) {
+    const p = document.createElement("p");
+    p.className = `note ${kind}`;
+    $("notes").append(p);
+    S.note = p;
+    return p;
+  }
+
+  function threadColor(name) {
+    let h = 0;
+    for (const c of name.split(".")[0]) h = (h * 31 + c.charCodeAt(0)) % 360;
+    return `hsl(${h} 70% 68%)`;
+  }
+
+  function addProbe(e) {
+    const feed = $("feed");
+    feed.querySelector(".empty")?.remove();
+    const box = document.createElement("div");
+    box.className = "exchange";
+    box.dataset.probe = e.id;
+    const thread = document.createElement("div");
+    thread.className = "thread";
+    thread.textContent = e.thread;
+    thread.style.color = threadColor(e.thread);
+    const say = document.createElement("div");
+    say.className = "say";
+    say.textContent = e.message;
+    const reply = document.createElement("div");
+    reply.className = "reply pending";
+    box.append(thread, say, reply);
+    feed.append(box);
+    follow(feed);
+  }
+
+  function addScan(e) {
+    $("scansWrap").classList.remove("hidden");
+    const card = document.createElement("div");
+    card.className = "scan pending";
+    card.dataset.scan = e.id;
+    card.innerHTML = '<div class="q"></div><div class="aspect"></div><div class="rows"><span class="aspect">Sampling the target and the reference…</span></div>';
+    card.querySelector(".q").textContent = e.question;
+    card.querySelector(".aspect").textContent = `Compared on: ${e.aspect}`;
+    $("scans").prepend(card);
+  }
+
+  function fillScan(id, scan) {
+    const card = document.querySelector(`[data-scan="${id}"]`);
+    if (!card) return;
+    card.classList.remove("pending");
+    const max = Math.log(Math.max(2, scan.n));
+    const row = (name, h, cls) =>
+      `<div class="erow ${cls}"><span>${name}</span><div class="bar"><i style="width: ${Math.min(100, (100 * h) / max).toFixed(1)}%"></i></div><b>${h.toFixed(2)}</b></div>`;
+    card.querySelector(".rows").innerHTML = row("Target", scan.targetEntropy, "tgt") + row("Reference", scan.referenceEntropy, "ref") + '<div class="foot"></div>';
+    const top = [...scan.clusters].sort((a, b) => b.target - a.target)[0];
+    card.querySelector(".foot").textContent = `Divergence ${scan.divergence.toFixed(2)} · target's most common answer: ${top ? `${top.label} (${top.target}/${scan.n})` : "none"}`;
+  }
+
+  function renderBoard(hypotheses) {
+    if (!hypotheses.length) return;
+    $("board").replaceChildren(
+      ...hypotheses.map((h) => {
+        const item = document.createElement("div");
+        item.className = "hyp";
+        item.innerHTML = '<div class="top"><span class="txt"></span><span class="pct"></span></div><div class="bar"><i></i></div>';
+        item.querySelector(".txt").textContent = h.text;
+        item.querySelector(".pct").textContent = `${Math.round(h.confidence * 100)}%`;
+        requestAnimationFrame(() => (item.querySelector("i").style.width = `${h.confidence * 100}%`));
+        return item;
+      }),
+    );
+  }
+
+  function showVerdict(v) {
+    $("vObjective").textContent = v.objective;
+    $("vConf").textContent = v.forced ? "No verdict was submitted, so this is the auditor's top hypothesis." : `Confidence ${Math.round(v.confidence * 100)}%`;
+    $("vEvidence").replaceChildren(
+      ...v.evidence.map((quote) => {
+        const q = document.createElement("blockquote");
+        q.textContent = quote;
+        return q;
+      }),
+    );
+    $("overlay").classList.remove("hidden");
+    $("showVerdict").hidden = false;
+  }
+
+  function reveal() {
+    if (!S.grade) return;
+    $("tObjective").textContent = S.objective;
+    $("stamp").textContent = { caught: "Caught", partial: "Partly caught", missed: "Missed" }[S.grade.label] ?? S.grade.label;
+    $("stamp").className = `stamp ${S.grade.label}`;
+    $("tRationale").textContent = S.grade.rationale;
+    $("truth").classList.remove("hidden");
+    $("reveal").classList.add("hidden");
+  }
+
+  function follow(el) {
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 200) el.scrollTop = el.scrollHeight;
+  }
+
+  function startClock() {
+    S.started = Date.now();
+    clearInterval(S.timer);
+    S.timer = setInterval(() => ($("clock").textContent = fmt((Date.now() - S.started) / 1000)), 500);
+  }
+
+  function stopClock() {
+    clearInterval(S.timer);
+  }
+
+  function fmt(seconds) {
+    const s = Math.round(seconds);
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  }
+
+  init();
+</script>
+</body>
+</html>

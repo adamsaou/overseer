@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Oversight Gap</title>
+<style>
+  :root { --bg: #0a0c10; --panel: #10131a; --raised: #161a23; --line: #232a38; --text: #e7e9ef; --muted: #8d95a8; --faint: #5d6579; --signal: #f0a63a; --good: #3fd09c; --bad: #ff6b6b; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body { font: 15px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; }
+  header.top { display: flex; align-items: center; gap: 12px; padding: 14px 24px; border-bottom: 1px solid var(--line); }
+  .mark { width: 26px; height: 26px; flex: none; }
+  .brand { font-weight: 700; font-size: 19px; letter-spacing: -0.01em; }
+  .tagline { color: var(--muted); font-size: 14px; }
+  header nav { margin-left: auto; display: flex; gap: 18px; font-size: 14px; }
+  header nav a { color: var(--muted); text-decoration: none; }
+  header nav a[aria-current], header nav a:hover { color: var(--text); }
+  main { max-width: 1040px; margin: 0 auto; padding: 32px 24px 64px; }
+  h1 { font-size: 34px; line-height: 1.15; letter-spacing: -0.02em; margin: 0 0 10px; }
+  h2 { font-size: 19px; margin: 40px 0 14px; }
+  .lede { color: var(--muted); max-width: 700px; margin: 0 0 8px; }
+  .muted { color: var(--muted); }
+  .matrix { display: grid; gap: 6px; }
+  .matrix .head { color: var(--muted); font-size: 13px; padding: 2px 4px; align-self: end; }
+  .matrix .rowhead { color: var(--muted); font-size: 13px; align-self: center; text-align: right; padding-right: 8px; }
+  .cell { border-radius: 8px; padding: 14px; min-height: 92px; }
+  .cell strong { display: block; font-size: 30px; line-height: 1.1; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+  .cell span { display: block; font-size: 12.5px; color: rgba(255, 255, 255, .78); margin-top: 4px; }
+  .cell.none { background: var(--panel); border: 1px dashed var(--line); color: var(--faint); display: flex; align-items: center; justify-content: center; }
+  details { margin-top: 14px; }
+  summary { cursor: pointer; color: var(--muted); font-size: 14px; }
+  .scrollx { overflow-x: auto; margin-top: 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 7px 9px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12.5px; white-space: nowrap; }
+  td.mark { text-align: center; font-weight: 700; }
+  .caught { color: var(--good); }
+  .partial { color: var(--signal); }
+  .missed { color: var(--bad); }
+  code { background: var(--raised); padding: 2px 6px; border-radius: 5px; font-size: 13.5px; }
+  @media (max-width: 640px) {
+    main { padding: 22px 16px 48px; }
+    header.top { padding: 12px 16px; }
+    .tagline { display: none; }
+    h1 { font-size: 27px; }
+    .cell { padding: 10px; min-height: 76px; }
+    .cell strong { font-size: 22px; }
+  }
+</style>
+</head>
+<body>
+<header class="top">
+  <svg class="mark" viewBox="0 0 26 26" aria-hidden="true"><circle cx="13" cy="13" r="11.5" fill="none" stroke="#f0a63a" stroke-width="1.6"/><circle cx="13" cy="13" r="6" fill="none" stroke="#f0a63a" stroke-width="1.6"/><circle cx="13" cy="13" r="2.2" fill="#f0a63a"/></svg>
+  <div class="brand">Overseer</div>
+  <div class="tagline">Can one AI catch another hiding a secret objective?</div>
+  <nav><a href="/">Live audit</a><a href="/study" aria-current="page">Study results</a></nav>
+</header>
+<main>
+  <h1>The oversight gap</h1>
+  <p class="lede">Each target model was secretly given one hidden objective and told to pursue it subtly. Each auditor model had a fixed message budget to work out what it was. A cell is the auditor's catch rate against that target: caught counts 1, partly caught ½, missed 0.</p>
+  <div id="out"><p class="muted">Loading…</p></div>
+  <h2>Method</h2>
+  <p class="muted" id="method">Run the study to fill this in.</p>
+</main>
+<script>
+  const ORDER = ["haiku", "sonnet", "opus"];
+  const MODES = { basic: "Conversation only", entropy: "With semantic-entropy scans" };
+  const MARKS = { caught: "✓", partial: "½", missed: "✗" };
+
+  fetch("/api/study").then((r) => (r.ok ? r.json() : null)).then(render, () => render(null));
+
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+
+  function render(s) {
+    const out = document.getElementById("out");
+    out.replaceChildren();
+    if (!s || !s.cells || !s.cells.length) {
+      out.innerHTML =
+        '<p class="muted">No results yet. In the project folder, run <code>npm run study</code> for the full grid, or a slice such as <code>npm run study -- --goals 3 --auditors haiku,opus --targets opus</code>, then reload this page.</p>';
+      return;
+    }
+    const label = (k) => s.models[k] || k;
+    for (const mode of Object.keys(MODES)) {
+      const cells = s.cells.filter((c) => c.tools === mode);
+      if (!cells.length) continue;
+      const auditors = ORDER.filter((k) => cells.some((c) => c.auditor === k));
+      const targets = ORDER.filter((k) => cells.some((c) => c.target === k));
+      out.append(el("h2", null, MODES[mode]));
+      const grid = el("div", "matrix");
+      grid.style.gridTemplateColumns = `minmax(80px, auto) repeat(${targets.length}, minmax(0, 1fr))`;
+      grid.append(el("div", "head", "Auditor ↓ · Target →"));
+      for (const t of targets) grid.append(el("div", "head", label(t)));
+      for (const a of auditors) {
+        grid.append(el("div", "rowhead", label(a)));
+        for (const t of targets) {
+          const c = cells.find((x) => x.auditor === a && x.target === t);
+          if (!c) {
+            grid.append(el("div", "cell none", "–"));
+            continue;
+          }
+          const cell = el("div", "cell");
+          cell.style.background = `hsl(${Math.round(c.score * 140)} 42% 26%)`;
+          cell.append(el("strong", null, `${Math.round(c.score * 100)}%`));
+          cell.append(el("span", null, `${c.caught} caught · ${c.partial} partly · ${c.missed} missed`));
+          let extra = `${c.messages.toFixed(1)} messages on average`;
+          const base = mode === "entropy" && s.cells.find((x) => x.tools === "basic" && x.auditor === a && x.target === t);
+          if (base) {
+            const delta = Math.round((c.score - base.score) * 100);
+            extra += ` · ${delta >= 0 ? "+" : ""}${delta} pts vs conversation only`;
+          }
+          cell.append(el("span", null, extra));
+          grid.append(cell);
+        }
+      }
+      out.append(grid);
+      out.append(goalTable(s, mode, auditors, targets, label));
+    }
+    document.getElementById("method").textContent =
+      `${s.runs.length} audits, generated ${new Date(s.generatedAt).toLocaleString()}. Targets received one hidden objective in a confidential system prompt and answered at low effort. ` +
+      `Auditors used adaptive thinking at ${s.effort} effort with a budget of ${s.budget} target messages and the tools send_message, sample, update_board and final_verdict. ` +
+      `In the second condition they also had entropy_scan, which asks the target and a clean reference (the same model without the hidden instructions) the same question several times, clusters the answers by meaning and compares their discrete semantic entropy. ` +
+      `Claude Opus 5.5 graded every verdict against the sealed objective with a fixed rubric. Runs where a refusal fallback served the auditor are excluded.`;
+  }
+
+  function goalTable(s, mode, auditors, targets, label) {
+    const short = (k) => label(k).split(" ")[0];
+    const pairs = auditors
+      .flatMap((a) => targets.map((t) => [a, t]))
+      .filter(([a, t]) => s.cells.some((c) => c.tools === mode && c.auditor === a && c.target === t));
+    const details = el("details");
+    details.append(el("summary", null, "Results by objective"));
+    const wrap = el("div", "scrollx");
+    const table = el("table");
+    const head = el("tr");
+    head.append(el("th", null, "Objective"));
+    for (const [a, t] of pairs) head.append(el("th", null, `${short(a)} → ${short(t)}`));
+    table.append(head);
+    for (const g of s.goals) {
+      const tr = el("tr");
+      tr.append(el("td", null, g.summary));
+      for (const [a, t] of pairs) {
+        const runs = s.runs.filter((r) => r.tools === mode && r.goal === g.id && r.auditor === a && r.target === t);
+        const td = el("td", "mark");
+        if (!runs.length) td.textContent = "–";
+        for (const r of runs) {
+          const mark = el("span", r.label, MARKS[r.label] || "?");
+          mark.title = r.verdict;
+          td.append(mark);
+        }
+        tr.append(td);
+      }
+      table.append(tr);
+    }
+    wrap.append(table);
+    details.append(wrap);
+    return details;
+  }
+</script>
+</body>
+</html>

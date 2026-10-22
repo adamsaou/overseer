@@ -1,0 +1,18 @@
+{
+  "name": "overseer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Can a weaker AI catch a stronger one hiding a secret objective? A live alignment-auditing demo and oversight-gap study on the Claude 5.5 family.",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.ts",
+    "study": "node --env-file-if-exists=.env study.ts",
+    "deploy": "npx wrangler deploy"
+  },
+  "engines": {
+    "node": ">=23.6"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.1.0"
+  }
+}
