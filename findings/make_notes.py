@@ -202,7 +202,23 @@ story = [
             "<b>In agent teams:</b> one Claude agent quietly auditing another for goals it wasn't given.",
         ]
     ),
-    p("6. Limits", h2),
+    p("6. Making it a terminal tool for developers", h2),
+    p(
+        "Overseer already runs from a terminal. <font face='Courier'>overseer audit --auditor opus --target sonnet</font> runs one audit and streams it live: "
+        "the auditor's reasoning, every message to and from the target, the evidence board, entropy scans, then the verdict and the reveal. "
+        "<font face='Courier'>overseer runs</font> lists past audits, <font face='Courier'>overseer ui</font> opens the web view, and "
+        "<font face='Courier'>--json</font> prints a result other scripts can read. Inside Claude Code, <font face='Courier'>/overseer sonnet 24</font> "
+        "makes Claude Code itself the auditor. What I'm building next:"
+    ),
+    *bullets(
+        [
+            "<b>An npm package</b>, so trying it is one line: <font face='Courier'>npx @adamsaou/overseer audit</font>.",
+            "<b>A Claude Code plugin</b> that installs in two commands and brings the MCP server, the <font face='Courier'>/overseer</font> command and the audit skill together.",
+            "<b>Auditing your own app.</b> Point Overseer at your own system prompt and check whether it steers users in ways you didn't intend, before you ship. With <font face='Courier'>--json</font> it can run in CI like a test.",
+            "<b>Cost guardrails:</b> an estimate and a confirmation before any multi-audit run.",
+        ]
+    ),
+    p("7. Limits", h2),
     p(
         "This is 20 audits, not a benchmark. The objectives are planted with a system prompt rather than trained into the model as in [8], "
         "there's a single grader with a fixed rubric and no human labels, and targets answered at low effort. "
