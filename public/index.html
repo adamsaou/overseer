@@ -263,6 +263,8 @@
       $("auditor").append(option(m.key, m.label));
       $("target").append(option(m.key, m.label));
     }
+    // Audits run through the MCP server have Claude Code itself as the auditor.
+    S.labels["claude-code"] = "Claude Code";
     $("auditor").value = "opus";
     $("target").value = "sonnet";
     S.goals = cfg.goals;

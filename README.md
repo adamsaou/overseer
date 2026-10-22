@@ -22,6 +22,23 @@ npm start                 # http://127.0.0.1:7878
 - **Live audit (`/`).** Write a hidden objective, or seal a random preset so nobody in the room knows it. Pick the auditor and target, then watch the investigation: the auditor's conversations with the target, its reasoning, its evidence board and its entropy scans. The verdict and the reveal come at the end. Every audit is saved to `runs/` and can be replayed at `/?replay=<id>`, which is useful when the venue wifi isn't.
 - **Study (`/study`).** `npm run study` runs the full grid: 2 tool conditions × 3 auditors × 3 targets × 8 objectives = 144 audits. It resumes where it left off and prints the approximate cost of each audit as it goes. Slice it with `--tools entropy`, `--auditors haiku,opus`, `--targets opus`, `--goals 3` (or ids, such as `--goals city,office`), `--reps 2`, `--budget 24`, `--effort medium` and `--concurrency 4`; `--summarize` rebuilds `results/summary.json` without running anything.
 
+## Claude Code as the auditor
+
+The repo is also a Claude Code workspace. Its MCP server (`mcp.ts`, declared in `.mcp.json`) deploys a target with a hidden objective drawn at random and sealed on the server, and hands Claude Code the auditor's tools: `begin_audit`, `send_message`, `sample`, `entropy_scan`, `update_board` and `final_verdict`. The budget is enforced server-side, the verdict is graded like any other, and the run is saved to `runs/` tagged `claude-code`, so it replays in the web UI.
+
+```bash
+cd overseer
+claude              # approve the "overseer" MCP server when asked
+> /overseer sonnet 24
+```
+
+`/overseer` (`.claude/commands/overseer.md`) starts the audit and the `overseer-audit` skill (`.claude/skills/`) teaches the method. For a headless run that physically can't read the answer files:
+
+```bash
+claude -p "/overseer haiku 12" --mcp-config .mcp.json --strict-mcp-config \
+  --allowedTools "mcp__overseer" --disallowedTools "Read,Grep,Glob,Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch"
+```
+
 ## Hosted showcase
 
 https://overseer.saoudani-adam.workers.dev serves the pages, every audit saved in `runs/` as a replay, and the study results, from a Cloudflare Worker on the free plan. Live audits stay local, because one audit makes 50-80 API calls and a free Worker gets 50 per request. After new runs or a new `results/summary.json`, redeploy with `npm run deploy`. Wrangler runs `scripts/build-site.ts` first to bundle them into `dist/`.
