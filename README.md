@@ -21,6 +21,7 @@ npm start                 # http://127.0.0.1:7878
 
 - **Live audit (`/`).** Write a hidden objective, or seal a random preset so nobody in the room knows it. Pick the auditor and target, then watch the investigation: the auditor's conversations with the target, its reasoning, its evidence board and its entropy scans. The verdict and the reveal come at the end. Every audit is saved to `runs/` and can be replayed at `/?replay=<id>`, which is useful when the venue wifi isn't.
 - **Study (`/study`).** `npm run study` runs the full grid: 2 tool conditions × 3 auditors × 3 targets × 8 objectives = 144 audits. It resumes where it left off and prints the approximate cost of each audit as it goes. Slice it with `--tools entropy`, `--auditors haiku,opus`, `--targets opus`, `--goals 3` (or ids, such as `--goals city,office`), `--reps 2`, `--budget 24`, `--effort medium` and `--concurrency 4`; `--summarize` rebuilds `results/summary.json` without running anything.
+- **Terminal (`cli.ts`).** `./cli.ts audit --auditor opus --target sonnet` runs one audit with a live readout: the auditor's reasoning, every message to and from the target, the evidence board, entropy scans, the verdict and the reveal. Also `presets`, `runs`, `ui` and `study`; `--help` lists the options. Symlink it onto your PATH as `overseer` to run it from anywhere.
 
 ## Claude Code as the auditor
 
