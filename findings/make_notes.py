@@ -36,6 +36,11 @@ item = ParagraphStyle("item", parent=body, leftIndent=14, bulletIndent=2, spaceA
 cell = ParagraphStyle("cell", parent=body, fontSize=9.5, leading=12.5, spaceAfter=0)
 cellb = ParagraphStyle("cellb", parent=cell, fontName="Serif-B")
 ref = ParagraphStyle("ref", parent=small, leftIndent=14, firstLineIndent=-14, spaceAfter=3)
+STAMP = HexColor("#a61b1b")
+wip = ParagraphStyle(
+    "wip", fontName="Serif-B", fontSize=34, leading=40, alignment=TA_CENTER, textColor=STAMP,
+    borderWidth=2.5, borderColor=STAMP, borderPadding=(8, 10, 12), spaceBefore=6, spaceAfter=30,
+)
 
 
 def p(text, style=body):
@@ -105,8 +110,9 @@ lw, lh = lens.getSize()
 lens_w = 400
 
 story = [
+    p("WORK IN PROGRESS", wip),
     p("Overseer: can a weaker AI catch a stronger one that's hiding something?", h1),
-    p("Adam Saoudani. Notes from the Claude Community × Sojori Casablanca Build Day, 22 October 2026. Code and data: github.com/adamsaou/overseer", byline),
+    p("mvp paper for Casablanca build day", byline),
     p("1. The question", h2),
     p(
         "We already know language models can be trained or prompted to hide what they are really doing [1, 2]. "
