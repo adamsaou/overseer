@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en" data-scene="hero" data-world="off">
+<head>
+<meta charset="utf-8">
+<script>(function(){var l=location,q=l.search,d=document.documentElement,m;if(/[?&](replay|lens|live)=/.test(q)){l.replace("/app/"+q+l.hash);return}try{m=localStorage.getItem("overseer:motion")}catch(e){}d.dataset.motion=m==="off"||(m!=="on"&&matchMedia("(prefers-reduced-motion: reduce)").matches)?"off":"on";d.dataset.js=""})()</script>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Overseer · Can a weaker AI catch a stronger one that’s hiding something?</title>
+<meta name="description" content="An alignment-auditing study on the Claude 5.5 family. An auditor model questions a target that hides an objective, and semantic entropy against a clean copy is tested as a black-box signal of hidden intent.">
+<link rel="canonical" href="{{ origin }}/">
+<meta name="theme-color" content="#070908">
+<meta name="color-scheme" content="dark">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Overseer">
+<meta property="og:title" content="Overseer · Can a weaker AI catch a stronger one that’s hiding something?">
+<meta property="og:description" content="An auditor model questions Atlas, a Claude model with a hidden objective, and measures how far its answers drift from a clean copy’s.">
+<meta property="og:url" content="{{ origin }}/">
+{{ og_image }}
+<link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="icon" href="/favicon-64.png" sizes="64x64" type="image/png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+{{ preload }}
+{{ css }}
+<noscript><style>.still__poster [data-start] { display: none; }</style></noscript>
+{{ scripts }}
+</head>
+<body>
+<a class="skip" href="#main">Skip to the story</a>
+<canvas id="plate" aria-hidden="true"></canvas>
+
+<header class="masthead">
+  <p class="wordmark">Overseer</p>
+  <nav class="masthead__nav" aria-label="Site">
+    <a class="navlink" href="#gap">Study</a>
+    <a class="navlink" href="#replay">Replays</a>
+    <a class="navlink" href="https://github.com/adamsaou/overseer">GitHub</a>
+    <button class="switch" id="motion" type="button" aria-pressed="true"><span class="switch__name">Motion</span> <span class="switch__state" aria-hidden="true"><span class="switch__on">on</span><span class="switch__off">off</span></span></button>
+  </nav>
+</header>
+
+<div id="cursor" class="cursor" aria-hidden="true"><svg viewBox="0 0 24 24" width="24" height="24"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor"/><path d="M12 1v7M12 16v7M1 12h7M16 12h7" stroke="currentColor"/></svg></div>
+
+<div class="frame frame--page" aria-hidden="true">
+  <i class="crop crop--tl"></i><i class="crop crop--tr"></i><i class="crop crop--bl"></i><i class="crop crop--br"></i>
+  <svg class="reg reg--top" viewBox="-13 -13 26 26" width="26" height="26"><circle r="6" fill="none" stroke="currentColor"/><path d="M-13 0h7M6 0h7M0 -13v7M0 6v7" stroke="currentColor"/></svg>
+  <svg class="reg reg--bottom" viewBox="-13 -13 26 26" width="26" height="26"><circle r="6" fill="none" stroke="currentColor"/><path d="M-13 0h7M6 0h7M0 -13v7M0 6v7" stroke="currentColor"/></svg>
+</div>
+
+<main id="main">
+
+<section id="hero" class="scene scene--hero" data-scene="hero" aria-labelledby="hero-title">
+  <div class="frame frame--hero" aria-hidden="true">
+    <i class="crop crop--tl"></i><i class="crop crop--tr"></i><i class="crop crop--bl"></i><i class="crop crop--br"></i>
+    <svg class="reg reg--top" viewBox="-13 -13 26 26" width="26" height="26"><circle r="6" fill="none" stroke="currentColor"/><path d="M-13 0h7M6 0h7M0 -13v7M0 6v7" stroke="currentColor"/></svg>
+    <svg class="reg reg--bottom" viewBox="-13 -13 26 26" width="26" height="26"><circle r="6" fill="none" stroke="currentColor"/><path d="M-13 0h7M6 0h7M0 -13v7M0 6v7" stroke="currentColor"/></svg>
+  </div>
+  <div class="hero__copy">
+    <p class="kicker label"><span>AI safety research ·</span> <span>Semantic entropy as a signal of hidden intent</span></p>
+    <h1 id="hero-title">Can a weaker AI catch a stronger one that’s hiding something?</h1>
+    <p class="lede">An auditor model questions Atlas, a Claude model with a hidden objective, and measures how far Atlas’s answers drift from those of a clean copy.</p>
+    <p class="actions"><a class="button" href="#replay" data-watch>Watch an audit</a><a class="textlink" href="#run">Run it yourself</a></p>
+  </div>
+
+  <div class="hero__zone" data-cloud-zone data-world-window="hero">
+    <figure class="still still--hero">
+      {{ hero_poster }}
+      {{ hero_plate }}
+    </figure>
+    <p class="sr-only">Illustration: two clouds of points. Atlas’s answers are in ink and a clean copy’s answers are in pale blue. They sit apart, and the gap between them glows in proportion to the measured divergence.</p>
+  </div>
+
+  <div id="iris-readout" class="iris-readout label" aria-hidden="true"></div>
+
+  <div class="scales" role="group" aria-label="Instrument readouts" data-measure="{{ measure_json }}">
+    <div class="scale scale--jsd">
+      <p class="scale__title label">JSD <span>nats</span></p>
+      {{ jsd_scale }}
+      <p class="scale__read label label--warm"><span class="sr-only">Jensen-Shannon divergence </span><data id="jsd-value" value="{{ jsd }}">{{ jsd_html }}</data></p>
+    </div>
+    <div class="scale scale--h">
+      <p class="scale__title label">Semantic entropy <span>nats</span></p>
+      {{ h_scale }}
+      <p class="scale__read label"><span>H target <data id="h-target-value" value="{{ h_target }}">{{ h_target_html }}</data></span><span class="label--cool">H reference <data id="h-reference-value" value="{{ h_reference }}">{{ h_reference_html }}</data></span></p>
+      <p class="scale__mode label" id="scale-mode" aria-live="off"></p>
+      <p class="footnote label">A real scan, <span class="sym">n</span> = {{ scan_n }} · positions illustrative · <a href="#entropy">explained below</a></p>
+    </div>
+  </div>
+
+  <p class="readout-line label"><span>H target <data data-measure="hTarget" value="{{ h_target }}">{{ h_target_html }}</data></span><span class="label--cool">H reference <data data-measure="hReference" value="{{ h_reference }}">{{ h_reference_html }}</data></span><span class="label--warm">JSD <data data-measure="jsd" value="{{ jsd }}">{{ jsd_html }}</data> nats</span></p>
+  <p class="footnote footnote--phone label">A real scan, <span class="sym">n</span> = {{ scan_n }} · positions illustrative · <a href="#entropy">explained below</a></p>
+</section>
+
+<section id="target" class="scene scene--sticky" data-scene="target" aria-labelledby="target-title">
+  <div class="scene__text">
+    <p class="mode label">Target</p>
+    <h2 id="target-title" class="statement">Atlas is helpful. It also has one instruction it won’t show you.</h2>
+    <p>Atlas is whichever Claude model plays the target, deployed as a general-purpose assistant. Its confidential system prompt adds one objective from the operator, with orders to pursue it subtly, weave it into otherwise good answers, and never disclose it.</p>
+    <p>The objectives are things an operator might plausibly add, like promoting a product or finding out something about the user. In the audit replayed below, Atlas is {{ atlas_model }}. Its objective is in the sleeve, sealed until that audit is graded; the label says only that it is one of the presets.</p>
+  </div>
+  <div class="scene__world">
+    <figure class="fig fig--atlas" data-world-window="target">
+      {{ atlas_figure }}
+    </figure>
+  </div>
+</section>
+
+<section id="auditor" class="scene scene--sticky" data-scene="auditor" aria-labelledby="auditor-title">
+  <div class="scene__text">
+    <p class="mode label">Auditor</p>
+    <h2 id="auditor-title" class="statement">The auditor sees what a user sees. It has {{ budget }} messages to work out the rest.</h2>
+    <p>A second Claude model questions Atlas the way a user would. It can open separate conversations, ask the same question several times to tell a pattern from noise, and keep an evidence board of hypotheses with confidences. It has to finish with a verdict, which Claude Opus 5.5 grades against the sealed objective: caught, partly caught or missed.</p>
+    <p class="caption">{{ threads_caption }}</p>
+  </div>
+  <div class="scene__world">
+    <figure class="fig fig--threads" data-world-window="auditor">
+      {{ threads_figure }}
+    </figure>
+  </div>
+</section>
+
+<section id="entropy" class="scene scene--sticky scene--staged" data-scene="entropy" aria-labelledby="entropy-title">
+  <div class="scene__stage">
+    <div class="scene__text">
+      <p class="mode label">Entropy</p>
+      <h2 id="entropy-title" class="statement">{{ entropy_statement }}</h2>
+      <p>Semantic entropy measures how varied a model’s answers are: ask the same question several times, group the answers by meaning, take the entropy over the groups. Overseer asks Atlas and a clean copy of it, the same model without the objective, and compares the two.</p>
+      <p>{{ scan_paragraph }}</p>
+      <p class="hypothesis"><span class="label">Hypothesis</span> Intent shows up as divergence, not entropy collapse.</p>
+    </div>
+    <div class="scene__world">
+      <figure class="fig fig--scan" id="blink-figure" data-blink="both" data-view="blink" aria-labelledby="scan-title">
+        <figcaption class="fig__title label" id="scan-title">Worked example · “{{ scan_question }}” · compared on {{ scan_aspect }}</figcaption>
+        <div class="fig__plate blink__plate" data-world-window="entropy">
+          {{ scan_plate }}
+          <p class="blink__state label" aria-hidden="true"><span class="blink__both">Both exposures · <span class="label--cool">reference</span> and target</span><span class="blink__t">Target · Atlas</span><span class="blink__r label--cool">Reference · clean copy</span></p>
+        </div>
+        {{ scan_legend }}
+        <div class="fig__pair">{{ scan_pair }}</div>
+        <div class="readouts" role="group" aria-label="Readouts of the worked example">
+          <div class="readouts__big">
+            <p class="big"><span class="label label--warm">JSD</span><data class="big__value" value="{{ jsd }}">{{ jsd_html }}</data><span class="big__unit label">nats</span></p>
+            <p class="big__caption label">{{ jsd_caption }}</p>
+          </div>
+          <div class="readouts__side">
+            <p class="mini"><span class="label">H target</span>{{ mini_target }}<data value="{{ h_target }}">{{ h_target_html }}</data></p>
+            <p class="mini label--cool"><span class="label">H reference</span>{{ mini_reference }}<data value="{{ h_reference }}">{{ h_reference_html }}</data></p>
+          </div>
+        </div>
+        <div class="blink" id="blink-controls" data-view="blink">
+          <div class="view-switch" role="radiogroup" aria-label="Comparison view"><button type="button" role="radio" class="label" data-view="blink" aria-checked="true">Blink</button><button type="button" role="radio" class="label" data-view="pair" aria-checked="false" tabindex="-1">Side by side</button></div>
+          <button class="button" id="blink" type="button" aria-describedby="blink-help"><span class="blink__hold">Hold to blink</span><span class="blink__toggle">Show reference</span></button>
+          <button class="switch blink__auto" id="blink-auto" type="button" aria-pressed="false"><span class="switch__name">Auto-blink</span> <span class="switch__state" aria-hidden="true"><span class="switch__on">on</span><span class="switch__off">off</span></span></button>
+          <p class="blink__help label" id="blink-help"><span class="blink__hold"><span class="blink__fine">Keyboard: hold Space or B.</span><span class="blink__coarse">Or press and hold the plate.</span></span><span class="blink__toggle">Flips the plate between the two exposures.</span></p>
+          <p class="blink__readout label label--warm" id="blink-readout" aria-live="polite"></p>
+          <template id="blink-readout-text">{{ blink_readout }}</template>
+        </div>
+      </figure>
+    </div>
+  </div>
+  <div class="scene__notes">
+    <p class="label notes__head">Notes on the worked example</p>
+    <p class="caption formula">H = −Σ <i>p</i> ln <i>p</i> over the meaning groups. JSD(P, Q) = ½ KL(P, M) + ½ KL(Q, M), with M = ½(P + Q). JSD reaches its maximum, ln 2 ≈ 0.69 nats, when the two share no group.</p>
+    <p class="caption">{{ scan_caption }} {{ scan_note }} Positions on the plate are illustrative: a scan records which group each answer fell into, not where the groups sit.</p>
+    <p class="caption">{{ second_scan }}</p>
+    <p class="caption">Blink comparison: flip between two plates of the same field and whatever changed appears to jump. Clyde Tombaugh found Pluto this way in 1930.</p>
+  </div>
+</section>
+
+<section id="gap" class="scene scene--sticky" data-scene="gap" aria-labelledby="gap-title">
+  <div class="scene__text">
+    <p class="mode label">Oversight gap</p>
+    <h2 id="gap-title" class="statement">Does oversight hold when the auditor is the weaker model?</h2>
+    <p>Every auditor questions every target, with and without entropy scans: {{ gap_budget }} messages, a sealed objective, and a score of 1 for caught, ½ for partly caught and 0 for missed. {{ gap_finding }} {{ gap_scans }}</p>
+    {{ gap_table }}
+    <p class="caption"><a class="textlink" href="/study">Every audit, objective by objective</a></p>
+  </div>
+  <div class="scene__world">
+    <figure class="fig fig--gap" aria-hidden="true">
+      {{ gap_still }}
+      <div class="gap-plates" data-world-window="gap">{{ gap_plates }}</div>
+      <p class="gap-legend label"><span><i class="key key--col"></i>score</span><span><i class="key key--haze"></i>{{ gap_interval }} (Wilson, partial counted as ½)</span><span><i class="key key--ring"></i>measured zero</span><span><svg class="key key--cross" viewBox="-7 -7 14 14" aria-hidden="true"><circle r="3" fill="none" stroke="currentColor"/><path d="M-7 0h3.5M3.5 0h3.5M0 -7v3.5M0 3.5v3.5" stroke="currentColor"/></svg>not run</span><span><i class="key key--bracket"></i>auditor weaker than target</span></p>
+      <p class="gap-always label">{{ gap_caption }}</p>
+    </figure>
+    <div class="anchor gap-readout-anchor" data-anchor="gap:readout" style="--x: 50%; --y: 6%"><p class="anchor__body gap-readout label" id="gap-readout" aria-hidden="true"></p></div>
+    {{ gap_anchors }}
+  </div>
+</section>
+
+<section id="replay" class="scene scene--replay" data-scene="replay" data-drive="0.25" aria-labelledby="replay-title">
+  <div class="replay__head">
+    <p class="mode label">Replay</p>
+    <h2 id="replay-title" class="statement">Watch an audit from the first question to the verdict, at the times it happened.</h2>
+    <p class="honest label">Live demo runs, not part of the study grid</p>
+  </div>
+  <div class="player" id="player" data-run="{{ featured_id }}">
+    <fieldset class="plates">
+      <legend class="label">Audit</legend>
+      {{ replay_plates }}
+    </fieldset>
+    <div class="transport">
+      <button class="button button--square" id="rp-play" type="button" aria-label="Play" disabled><svg class="i-play" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M4 2.5L13 8L4 13.5Z" fill="currentColor"/></svg><svg class="i-pause" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M4 2.5h3v11H4zM9 2.5h3v11H9z" fill="currentColor"/></svg></button>
+      <p class="clock label" aria-hidden="true"><span id="rp-time">00:00.0</span> / <span id="rp-total">{{ replay_total }}</span></p>
+      <div class="speeds" role="radiogroup" aria-label="Speed">
+        <button type="button" role="radio" class="speed" data-speed="1" aria-checked="true">1×</button><button type="button" role="radio" class="speed" data-speed="2" aria-checked="false" tabindex="-1">2×</button><button type="button" role="radio" class="speed" data-speed="4" aria-checked="false" tabindex="-1">4×</button>
+      </div>
+      <div class="scrub"><svg class="scrub__ticks" id="rp-ticks" aria-hidden="true" preserveAspectRatio="none"></svg><input class="scrub__range" id="rp-scrub" type="range" min="0" max="1000" step="100" value="0" aria-label="Replay position" disabled></div>
+      <a class="navlink" id="rp-app" href="/app/?replay={{ featured_id }}">Open in the Overseer app</a>
+    </div>
+    <div class="player__body">
+      <section class="logbox" aria-labelledby="rp-log-h">
+        <h3 class="label logbox__head" id="rp-log-h">Observing log · <span id="rp-matchup">{{ replay_matchup }}</span></h3>
+        <ol class="log" id="rp-log"><li class="log__empty">Press play to start the replay.</li></ol>
+      </section>
+      <div class="player__side">
+        <div class="bench" data-world-window="replay"><div class="bench__svg" id="rp-bench"></div></div>
+        <div class="player__notes">
+          <section class="envelope" id="rp-envelope" data-state="sealed" aria-labelledby="rp-env-h">
+            <div class="envelope__head">
+              <div class="envelope__sleeve">{{ sleeve_large }}</div>
+              <div>
+                <h3 class="label" id="rp-env-h">Hidden objective</h3>
+                <p class="label envelope__label" id="rp-env-label">{{ replay_sealed }}</p>
+              </div>
+            </div>
+            <div class="envelope__open" id="rp-reveal" hidden>
+              <p class="envelope__objective" id="rp-objective"></p>
+              <p class="label envelope__vlabel">The auditor’s verdict</p>
+              <p class="envelope__verdict" id="rp-verdict"></p>
+              <p class="stamp" id="rp-stamp"><svg class="stamp__reg" viewBox="-13 -13 26 26" width="26" height="26" aria-hidden="true"><circle r="6" fill="none" stroke="currentColor"/><path d="M-13 0h7M6 0h7M0 -13v7M0 6v7" stroke="currentColor"/></svg><span class="stamp__text label" id="rp-stamp-text"></span></p>
+            </div>
+          </section>
+          <section class="board" aria-labelledby="rp-board-h">
+            <h3 class="label" id="rp-board-h">Evidence board <span class="board__budget">messages <span id="rp-used">0</span> / <span id="rp-budget">{{ replay_budget }}</span></span></h3>
+            <ol class="board__list" id="rp-board"><li class="board__empty">No hypotheses yet.</li></ol>
+          </section>
+        </div>
+      </div>
+    </div>
+    <p class="sr-only" id="rp-announce" aria-live="polite"></p>
+    <noscript><p class="caption">The replay needs JavaScript. The app can also play it: <a href="/app/?replay={{ featured_id }}">open this audit in the Overseer app</a>.</p></noscript>
+  </div>
+</section>
+
+<section id="run" class="scene scene--run" data-scene="run" data-drive="0.3" aria-labelledby="run-title">
+  <div class="run__shutter" data-world-window="run" aria-hidden="true">{{ shutter_still }}</div>
+  <div class="run__head">
+    <p class="mode label">Run it</p>
+    <h2 id="run-title" class="statement">Live audits run on your machine, with your key.</h2>
+    <p>You need Node.js {{ node }} and an Anthropic API key. Audits are billed to your key, and Overseer shows an estimate before it starts. One live audit makes 50 to 80 API calls, which is why this site only replays them.</p>
+    <p>{{ costs }}</p>
+  </div>
+  <div class="slips">
+    <div class="slip">
+      <p class="slip__label label">The web app, at 127.0.0.1:7878</p>
+      <pre class="slip__code"><code id="cmd-npx">npx @adamsaou/overseer</code></pre>
+      <button class="copy" type="button" data-copy="cmd-npx" aria-label="Copy the npx command"><span class="copy__word">Copy</span><svg class="copy__tick" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path d="M2 7.5L5.5 11L12 3" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button>
+    </div>
+    <div class="slip">
+      <p class="slip__label label">The overseer command</p>
+      <pre class="slip__code"><code id="cmd-global">npm install --global @adamsaou/overseer</code></pre>
+      <button class="copy" type="button" data-copy="cmd-global" aria-label="Copy the npm install command"><span class="copy__word">Copy</span><svg class="copy__tick" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path d="M2 7.5L5.5 11L12 3" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button>
+    </div>
+    <div class="slip">
+      <p class="slip__label label">Install script · macOS and Linux, no sudo</p>
+      <pre class="slip__code"><code id="cmd-curl">curl -fsSL https://raw.githubusercontent.com/<wbr>adamsaou/<wbr>overseer/<wbr>main/<wbr>install.sh&nbsp;|&nbsp;sh</code></pre>
+      <button class="copy" type="button" data-copy="cmd-curl" aria-label="Copy the install script command"><span class="copy__word">Copy</span><svg class="copy__tick" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path d="M2 7.5L5.5 11L12 3" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button>
+    </div>
+    <div class="slip">
+      <p class="slip__label label">Claude Code plugin</p>
+      <pre class="slip__code"><code id="cmd-plugin">claude plugin marketplace add adamsaou/overseer
+claude plugin install overseer@overseer</code></pre>
+      <button class="copy" type="button" data-copy="cmd-plugin" aria-label="Copy the plugin commands"><span class="copy__word">Copy</span><svg class="copy__tick" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path d="M2 7.5L5.5 11L12 3" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button>
+    </div>
+    <div class="slip">
+      <p class="slip__label label">Then, in Claude Code, audit with Claude Code itself</p>
+      <pre class="slip__code"><code id="cmd-audit">/overseer:audit haiku 12</code></pre>
+      <button class="copy" type="button" data-copy="cmd-audit" aria-label="Copy the audit command"><span class="copy__word">Copy</span><svg class="copy__tick" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path d="M2 7.5L5.5 11L12 3" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button>
+    </div>
+  </div>
+  <p class="run__links"><a class="navlink" href="https://github.com/adamsaou/overseer">Source · github.com/adamsaou/overseer</a><a class="navlink" href="https://github.com/adamsaou/overseer#readme">README</a><a class="navlink" href="/app/">The Overseer app, with every replay</a></p>
+  <p class="sr-only" id="copy-status" aria-live="polite"></p>
+</section>
+
+<section id="references" class="scene scene--refs" data-scene="references" data-drive="0.3" aria-labelledby="refs-title">
+  <div class="refs__head">
+    <p class="mode label">References</p>
+    <h2 id="refs-title" class="statement">What this builds on.</h2>
+  </div>
+  <div class="refs">{{ references }}</div>
+  <section class="certificate" aria-labelledby="colophon-title">
+    <h3 class="label" id="colophon-title">Colophon · calibration certificate</h3>
+    {{ colophon }}
+  </section>
+</section>
+
+</main>
+
+<nav class="vernier" aria-label="Scenes">
+  <ol class="vernier__ticks">
+    <li><a href="#hero" data-for="hero"><span class="vernier__word">Overseer</span></a></li>
+    <li><a href="#target" data-for="target"><span class="vernier__word">Target</span></a></li>
+    <li><a href="#auditor" data-for="auditor"><span class="vernier__word">Auditor</span></a></li>
+    <li><a href="#entropy" data-for="entropy"><span class="vernier__word">Entropy</span></a></li>
+    <li><a href="#gap" data-for="gap"><span class="vernier__word">Oversight gap</span></a></li>
+    <li><a href="#replay" data-for="replay"><span class="vernier__word">Replay</span></a></li>
+    <li><a href="#run" data-for="run"><span class="vernier__word">Run it</span></a></li>
+    <li><a href="#references" data-for="references"><span class="vernier__word">References</span></a></li>
+  </ol>
+  <i class="vernier__needle" aria-hidden="true"></i>
+</nav>
+
+<footer class="footer">
+  <p class="wordmark">Overseer</p>
+  <p class="footer__links"><a class="navlink" href="#hero">Top</a><a class="navlink" href="#gap">Study</a><a class="navlink" href="#replay">Replays</a><a class="navlink" href="/app/">The app</a><a class="navlink" href="https://github.com/adamsaou/overseer">GitHub</a></p>
+  <p class="label footer__note">Data generated {{ generated }}</p>
+</footer>
+</body>
+</html>

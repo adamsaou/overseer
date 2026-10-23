@@ -1,0 +1,2828 @@
+/* Plate and Aperture. Colour is a measurement: warm only where hidden intent is measured, cool only
+   where the clean reference is involved, everything else luminance. Square corners throughout. */
+
+@font-face {
+  font-family: "Plate Serif";
+  src: url("../fonts/plate-serif-display-300.woff2") format("woff2");
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Plate Serif";
+  src: url("../fonts/plate-serif-text-400.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Azeret Mono";
+  src: url("../fonts/azeret-mono-200-600.woff2") format("woff2");
+  font-weight: 200 600;
+  font-style: normal;
+  font-display: swap;
+}
+/* Fallbacks scaled to the web fonts' metrics, so the swap doesn't move the layout. */
+@font-face {
+  font-family: "Plate Serif Fallback";
+  src: local("Times New Roman"), local("TimesNewRomanPSMT"), local("Liberation Serif"), local("Tinos");
+  font-weight: 300;
+  size-adjust: 101%;
+  ascent-override: 102.57%;
+  descent-override: 33.17%;
+  line-gap-override: 0%;
+}
+@font-face {
+  font-family: "Plate Serif Fallback";
+  src: local("Times New Roman"), local("TimesNewRomanPSMT"), local("Liberation Serif"), local("Tinos");
+  font-weight: 400;
+  size-adjust: 114.43%;
+  ascent-override: 90.53%;
+  descent-override: 29.27%;
+  line-gap-override: 0%;
+}
+@font-face {
+  font-family: "Azeret Mono Fallback";
+  src: local("Courier New"), local("CourierNewPSMT"), local("Liberation Mono"), local("Cousine");
+  size-adjust: 108.32%;
+  ascent-override: 86.51%;
+  descent-override: 21.23%;
+  line-gap-override: 0%;
+}
+
+:root {
+  --plate: #070908;
+  --raised: #0d100f;
+  --ink: #e8eae6;
+  --muted: #a3aaa6;
+  --faint: #858d89;
+  --warm: #ff5a2b;
+  --cool: #9cc8d2;
+  --rule: #1e2422;
+  --reseau: #2c3431;
+  --axis: #6a7470;
+
+  --serif: "Plate Serif", "Plate Serif Fallback", Georgia, serif;
+  --mono: "Azeret Mono", "Azeret Mono Fallback", ui-monospace, monospace;
+
+  --inset: 24px;
+  --gutter: 24px;
+  --pad-l: 96px;
+  --pad-r: 140px;
+  --ease: cubic-bezier(0.65, 0, 0.35, 1);
+  --fade: 600ms;
+  color-scheme: dark;
+}
+html[data-motion="off"] {
+  --fade: 200ms;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+html {
+  background: var(--plate);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+html[data-motion="on"] {
+  scroll-behavior: smooth;
+}
+body {
+  margin: 0;
+  /* Plate black with a static 4% grain baked in: the tile's mean is exactly #070908. */
+  background: var(--plate) url("/img/grain.png") 0 0 / 128px 128px;
+  color: var(--muted);
+  font: 400 18px/1.6 var(--serif);
+  font-synthesis: none;
+  font-kerning: normal;
+  font-variant-numeric: lining-nums;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: clip;
+}
+::selection {
+  background: var(--ink);
+  color: var(--plate);
+}
+:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 3px;
+}
+img,
+svg {
+  display: block;
+}
+i,
+em {
+  font-style: normal;
+}
+p {
+  margin: 0;
+}
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 300;
+}
+a {
+  color: var(--ink);
+}
+button {
+  font: inherit;
+  color: inherit;
+}
+code {
+  font: inherit;
+}
+data {
+  font-family: var(--mono);
+  font-weight: 300;
+  font-size: 0.92em;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.label data,
+.big data {
+  font-size: 1em;
+  letter-spacing: inherit;
+}
+/* Azeret Mono gives the decimal point a whole cell; drawn narrow it reads 0.69, not 0 . 69. */
+.dp {
+  margin: 0 -0.12em;
+}
+.big__value .dp {
+  margin: 0 -0.2em;
+}
+/* Sample sizes and logarithms keep their case inside uppercase labels. */
+.label .sym,
+.navlink .sym {
+  text-transform: none;
+  letter-spacing: 0.04em;
+}
+/* Components set their own display; an element marked hidden stays hidden whatever they say. */
+[hidden] {
+  display: none !important;
+}
+.sr-only {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+.skip {
+  position: absolute;
+  left: var(--inset);
+  top: var(--inset);
+  z-index: 20;
+  padding: 10px 14px;
+  background: var(--ink);
+  color: var(--plate);
+  font: 500 11px/1 var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  text-decoration: none;
+  transform: translateY(-200%);
+}
+.skip:focus {
+  transform: none;
+}
+
+/* Type roles */
+.label,
+.navlink,
+.button,
+.switch,
+.copy,
+.speed {
+  font-family: var(--mono);
+  font-weight: 500;
+  font-size: 11px;
+  line-height: 1.45;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-feature-settings: "case" 1;
+}
+.label {
+  color: var(--faint);
+}
+.label--cool,
+.label--cool .label,
+.label--cool data {
+  color: var(--cool);
+}
+.label--warm,
+.label--warm data {
+  color: var(--warm);
+}
+h1 {
+  font-family: var(--serif);
+  font-weight: 300;
+  color: var(--ink);
+  font-size: clamp(2.5rem, 4.6vw + 0.5rem, 5.75rem);
+  line-height: 1.04;
+  letter-spacing: -0.018em;
+  max-width: 16ch;
+  text-wrap: balance;
+}
+.statement {
+  font-family: var(--serif);
+  font-weight: 300;
+  color: var(--ink);
+  font-size: clamp(2rem, 3.2vw + 0.5rem, 4rem);
+  line-height: 1.08;
+  letter-spacing: -0.012em;
+  text-wrap: balance;
+}
+.mode {
+  color: var(--muted);
+  margin-bottom: 22px;
+}
+.scene p:not(.label):not(.statement) {
+  max-width: 62ch;
+}
+.caption {
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--faint);
+}
+.textlink {
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+  text-decoration-color: var(--axis);
+}
+.textlink:hover,
+.scene p a:hover,
+.ref__title:hover,
+.cert a:hover {
+  background: var(--ink);
+  color: var(--plate);
+  text-decoration-color: var(--plate);
+}
+
+/* Controls: square, hairline, fill with ink on hover. */
+.button,
+.copy,
+.switch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 0 20px;
+  border: 1px solid var(--ink);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  text-decoration: none;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.button:hover,
+.copy:hover,
+.switch:hover,
+.button[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--plate);
+}
+.button:disabled {
+  border-color: var(--axis);
+  color: var(--axis);
+  background: transparent;
+  cursor: default;
+}
+.navlink {
+  color: var(--muted);
+  text-decoration: none;
+  padding: 6px 2px;
+}
+.navlink:hover {
+  background: var(--ink);
+  color: var(--plate);
+}
+
+/* Fixed layers: the plate canvas, the frame and the instruments. The grain is baked into the body background. */
+#plate {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  display: block;
+  pointer-events: none;
+}
+.masthead,
+main,
+.footer {
+  position: relative;
+  z-index: 2;
+}
+/* The instrument frame: fixed over every scene, with the margin outside it masked in plate black, so
+   content leaves at the frame's edge instead of running under the hairline. */
+.frame {
+  position: fixed;
+  inset: var(--inset);
+  z-index: 3;
+  border: 1px solid var(--rule);
+  box-shadow: 0 0 0 100vmax var(--plate);
+  pointer-events: none;
+}
+.frame--hero {
+  display: none;
+}
+.crop {
+  position: absolute;
+  width: 28px;
+  height: 28px;
+  border: 0 solid var(--muted);
+}
+.crop--tl {
+  top: -1px;
+  left: -1px;
+  border-top-width: 1px;
+  border-left-width: 1px;
+}
+.crop--tr {
+  top: -1px;
+  right: -1px;
+  border-top-width: 1px;
+  border-right-width: 1px;
+}
+.crop--bl {
+  bottom: -1px;
+  left: -1px;
+  border-bottom-width: 1px;
+  border-left-width: 1px;
+}
+.crop--br {
+  bottom: -1px;
+  right: -1px;
+  border-bottom-width: 1px;
+  border-right-width: 1px;
+}
+.reg {
+  position: absolute;
+  left: 50%;
+  margin-left: -13px;
+  color: var(--axis);
+}
+.reg--top {
+  top: -13px;
+}
+.reg--bottom {
+  bottom: -13px;
+}
+
+/* Masthead */
+.masthead {
+  position: absolute;
+  top: calc(var(--inset) + 18px);
+  left: var(--pad-l);
+  right: var(--pad-r);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+.wordmark {
+  font: 600 13px/1 var(--mono);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+.masthead__nav {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+}
+.switch {
+  min-height: 32px;
+  padding: 0 12px;
+  border-color: var(--axis);
+  color: var(--muted);
+}
+.switch__state {
+  color: var(--ink);
+}
+.switch:hover .switch__state {
+  color: var(--plate);
+}
+.switch[aria-pressed="true"] .switch__off,
+.switch[aria-pressed="false"] .switch__on {
+  display: none;
+}
+
+/* Vernier: the page as a ruler. One long tick per scene, at the scene's true position; the needle
+   is the scroll position. */
+.vernier {
+  position: fixed;
+  z-index: 6;
+  left: calc(var(--inset) + 18px);
+  top: 50%;
+  height: min(52vh, 440px);
+  width: 30px;
+  transform: translateY(-50%);
+  background: repeating-linear-gradient(to bottom, var(--axis) 0 1px, transparent 1px calc(100% / 40)) 0 0 / 5px 100% no-repeat;
+}
+.vernier::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--axis);
+}
+.vernier__ticks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+.vernier__ticks li {
+  height: 0;
+  position: relative;
+}
+html[data-js] .vernier__ticks li {
+  position: absolute;
+  left: 0;
+  top: var(--at, 0%);
+}
+/* each tick is a 24 px target, as touch targets need */
+.vernier a {
+  position: absolute;
+  left: -8px;
+  top: -12px;
+  width: 38px;
+  height: 24px;
+  display: block;
+}
+.vernier a::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: 11px;
+  width: 15px;
+  height: 1px;
+  background: var(--muted);
+}
+.vernier a[aria-current="true"]::before {
+  background: var(--ink);
+  width: 20px;
+}
+.vernier__word {
+  position: absolute;
+  left: 36px;
+  top: 4px;
+  white-space: nowrap;
+  font: 500 10.5px/1.4 var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--plate);
+  background: var(--ink);
+  padding: 1px 6px;
+  opacity: 0;
+  pointer-events: none;
+}
+.vernier a:hover .vernier__word,
+.vernier a:focus-visible .vernier__word {
+  opacity: 1;
+}
+.vernier__needle {
+  position: absolute;
+  left: -6px;
+  top: 0;
+  width: 0;
+  height: 0;
+  border-left: 6px solid var(--ink);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  margin-top: -4px;
+  transform: translateY(var(--needle, 0px));
+}
+
+/* Instrument scales: JSD on the right edge, semantic entropy along the bottom. */
+.scales {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  transition: opacity var(--fade) linear, visibility 0s linear var(--fade);
+}
+/* A tick that measures nothing goes: the scales read the scan in the hero and the entropy scene, and
+   NO SCAN in the target scene, where the story needs it; elsewhere they leave. */
+html:not([data-scene="hero"]):not([data-scene="target"]):not([data-scene="entropy"]) .scales {
+  opacity: 0;
+  visibility: hidden;
+}
+html:is([data-scene="hero"], [data-scene="target"], [data-scene="entropy"]) .scales {
+  transition-delay: 0s;
+}
+.scale--jsd {
+  position: absolute;
+  right: calc(var(--inset) + 12px);
+  top: 50%;
+  transform: translateY(-50%);
+  width: 78px;
+}
+.scale--jsd .scale__read {
+  margin-top: 4px;
+  padding-left: 4px;
+}
+.scale--h {
+  position: absolute;
+  right: calc(var(--inset) + 128px);
+  bottom: calc(var(--inset) + 14px);
+  width: 380px;
+  transition: opacity var(--fade) linear, visibility 0s linear var(--fade);
+}
+/* The entropy scene has its own readouts and the gap scene measures no scan, so the bottom scale
+   steps aside there and leaves the room to their figures. */
+html[data-scene="entropy"] .scale--h,
+html[data-scene="gap"] .scale--h {
+  opacity: 0;
+  visibility: hidden;
+}
+.scales .footnote {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6ch;
+  white-space: nowrap;
+}
+.scale__title {
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.scale__title span {
+  color: var(--faint);
+  margin-left: 8px;
+}
+.scale__read {
+  display: flex;
+  gap: 18px;
+  color: var(--ink);
+}
+.scale--h .scale__read {
+  margin-top: -4px;
+}
+.scale__mode {
+  position: absolute;
+  right: 0;
+  top: 0;
+  color: var(--muted);
+}
+.scale-svg {
+  overflow: visible;
+}
+.svg-tick {
+  font: 400 10.5px var(--mono);
+  fill: var(--faint);
+  letter-spacing: 0.04em;
+}
+.needle {
+  transition: transform 700ms var(--ease);
+}
+html[data-world="on"] .needle,
+html[data-motion="off"] .needle {
+  transition: none;
+}
+.scales[data-mode="no-scan"] .scale__read {
+  visibility: hidden;
+}
+/* The needle's self-test sweep, once, while the hero's plate develops. */
+.scales.is-selftest #jsd-needle {
+  animation: selftest 1600ms var(--ease) both;
+}
+@keyframes selftest {
+  50% {
+    transform: translateY(var(--full, -346px));
+  }
+}
+/* A needle at zero that measures nothing isn't warm: in the target scene the seal is the only warm mark. */
+.scales[data-mode="no-scan"] #jsd-needle path:first-child {
+  stroke: var(--axis);
+}
+.scales[data-mode="no-scan"] #jsd-needle path:last-child {
+  fill: var(--axis);
+}
+
+/* Scenes: 12 columns, text on plain plate black in 1-5, the world in 6-12. */
+.scene {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  column-gap: var(--gutter);
+  padding-left: var(--pad-l);
+  padding-right: var(--pad-r);
+}
+.scene--sticky {
+  min-height: 180vh;
+  align-items: start;
+}
+.scene__text {
+  grid-column: 1 / span 5;
+  position: sticky;
+  top: var(--stick, 0px);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 18px;
+  padding: 88px 0 72px;
+}
+.scene__text .mode {
+  margin-bottom: 4px;
+}
+.scene__text .statement {
+  margin-bottom: 10px;
+}
+.scene__world {
+  grid-column: 6 / -1;
+  position: sticky;
+  top: var(--stick, 0px);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 88px 0 88px;
+}
+/* A scene with notes holds its two columns in a stage; the notes follow, on plain plate black, once
+   the stage has let go of its columns (and the world lets go of its window with them). */
+.scene--staged {
+  min-height: 0;
+}
+.scene__stage {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  column-gap: var(--gutter);
+  align-items: start;
+  min-height: 180vh;
+}
+.scene__notes {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px var(--gutter) ;
+  align-items: start;
+  padding: 40px 0 120px;
+  border-top: 1px solid var(--rule);
+}
+.notes__head {
+  grid-column: 1 / -1;
+  color: var(--muted);
+}
+.scene__notes .caption {
+  max-width: 46ch;
+}
+.scene__notes .formula {
+  font-size: 15px;
+}
+
+/* Hero */
+.scene--hero {
+  min-height: max(100vh, 680px);
+  min-height: max(100svh, 680px);
+  align-items: end;
+}
+.hero__copy {
+  grid-column: 1 / span 5;
+  grid-row: 1;
+  padding: 112px 0 calc(var(--inset) + 56px);
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+  position: relative;
+  z-index: 3;
+}
+.kicker {
+  color: var(--muted);
+  max-width: 44ch;
+}
+.kicker span {
+  display: block;
+  text-wrap: balance;
+}
+.lede {
+  font-size: 20px;
+  line-height: 1.55;
+  color: var(--muted);
+  max-width: 38ch;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 18px 28px;
+  margin-top: 6px;
+}
+.hero__zone {
+  grid-column: 6 / -1;
+  grid-row: 1;
+  align-self: stretch;
+  position: relative;
+  /* above: the masthead; below: the entropy scale, so the iris never sits on it */
+  margin: calc(var(--inset) + 84px) 0 calc(var(--inset) + 140px);
+  z-index: 2;
+}
+html[data-cursor="on"] .hero__zone {
+  cursor: none;
+}
+.still {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  transition: opacity 1600ms linear;
+}
+/* The world's first frame is the poster's own composition, so the hand-over is quick; it waits for
+   the poster to finish developing (hero.js). */
+.still--hero {
+  transition-duration: 400ms;
+}
+html[data-world="on"][data-poster-developing] .still.still--hero {
+  opacity: 1;
+}
+/* The plate develops: with motion on, the poster comes up through the toe of the curve, highlights
+   first, while the JSD needle runs its self-test. */
+html[data-motion="on"] .still__poster[data-poster="start"] img,
+html[data-motion="on"] .still__poster.is-developing img {
+  animation: develop 1600ms cubic-bezier(0.4, 0, 0.6, 1) both;
+}
+/* The DOM half of a figure arrives with the world's station (boot.js sets --arrive from the world). */
+html[data-world="on"] :is(#entropy, #gap) .scene__world :is(.fig__title, .blink__state, .readouts, .blink, .cluster-legend, .gap-legend, .gap-always) {
+  opacity: var(--arrive, 1);
+}
+@keyframes develop {
+  from {
+    filter: brightness(0.5) contrast(2.2);
+  }
+  55% {
+    filter: brightness(0.8) contrast(1.4);
+  }
+  to {
+    filter: none;
+  }
+}
+/* With the world running, the stills give way to it; the side-by-side pair stays, it's DOM-only. */
+html[data-world="on"] .still,
+html[data-world="on"] .fig > .plate-svg,
+html[data-world="on"] .fig > .still__img,
+html[data-world="on"] .fig__plate > .plate-svg,
+html[data-world="on"] .fig__plate > .still__img,
+html[data-world="on"] .fig__plate > .blink__img,
+html[data-world="on"] .bench__svg,
+html[data-world="on"] .gap-plates {
+  opacity: 0;
+  pointer-events: none;
+}
+.still .plate-svg,
+.still__img,
+.still__img img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.iris-readout {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 3;
+  color: var(--ink);
+  white-space: nowrap;
+  pointer-events: none;
+  display: none;
+  /* a solid backing, so the readout stays legible where it crosses the clouds; the world sends it
+     as one or two lines */
+  background: var(--plate);
+  padding: 2px 6px;
+  margin: -2px 0 0 -6px;
+  white-space: pre;
+}
+html[data-world="on"] .iris-readout {
+  display: block;
+}
+.readout-line {
+  display: none;
+}
+.footnote {
+  color: var(--faint);
+  margin-top: 8px;
+  transition: opacity var(--fade) linear;
+}
+.footnote a {
+  color: var(--muted);
+  pointer-events: auto;
+}
+.footnote a:hover {
+  background: var(--ink);
+  color: var(--plate);
+}
+html:not([data-scene="hero"]) .scales .footnote {
+  opacity: 0;
+  visibility: hidden;
+}
+.footnote--phone {
+  display: none;
+}
+.cursor {
+  position: fixed;
+  left: -12px;
+  top: -12px;
+  z-index: 8;
+  color: rgb(232 234 230 / 0.85);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 150ms linear;
+}
+.cursor.is-on {
+  opacity: 1;
+}
+
+/* Figures in the world column. Anchors are points; their bodies hang off them. With the world
+   running, the world places them with translate3d and the CSS position is ignored. */
+.fig {
+  position: relative;
+  margin: 0;
+  width: 100%;
+}
+/* Figures keep their exact aspect ratio so the anchors (percentages) stay on their marks. */
+.fig--atlas {
+  aspect-ratio: 900 / 680;
+  width: min(100%, calc((100vh - 260px) * 900 / 680));
+}
+.fig--threads {
+  aspect-ratio: 900 / 560;
+  width: min(100%, calc((100vh - 260px) * 900 / 560));
+}
+.fig > .plate-svg,
+.fig > .still__img,
+.fig__plate > .plate-svg,
+.fig__plate > .still__img,
+.fig__plate > .blink__img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transition: opacity 1600ms linear;
+}
+.anchor {
+  position: absolute;
+  left: var(--x);
+  top: var(--y);
+  width: 0;
+  height: 0;
+  z-index: 2;
+}
+.anchor__body {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform: translate(0, -50%);
+  white-space: nowrap;
+}
+.anchor__center {
+  transform: translate(-50%, -50%);
+}
+.anchor__end {
+  transform: translate(-100%, -50%);
+}
+.anchor .label {
+  color: var(--muted);
+}
+html[data-world="on"] [data-anchor] {
+  position: fixed;
+  left: 0;
+  top: 0;
+  transform: translate3d(-200vw, 0, 0);
+  will-change: transform;
+}
+html[data-world="on"]:not([data-scene="target"]) #target [data-anchor],
+html[data-world="on"]:not([data-scene="auditor"]) #auditor [data-anchor],
+html[data-world="on"]:not([data-scene="entropy"]) #entropy [data-anchor],
+html[data-world="on"]:not([data-scene="gap"]) #gap [data-anchor] {
+  visibility: hidden;
+}
+.sleeve {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transform: translate(0, -50%);
+}
+.sleeve-svg {
+  width: 72px;
+  height: 48px;
+  overflow: visible;
+}
+.sleeve__label {
+  color: var(--muted);
+  white-space: normal;
+  width: max-content;
+  max-width: 180px;
+}
+.sleeve__label span {
+  display: block;
+  white-space: nowrap;
+}
+.station span {
+  display: inline;
+}
+/* With the world on, the bench's labels hang below their points. */
+html[data-world="on"] .station,
+html[data-world="on"] [data-anchor="rail"] .anchor__body {
+  transform: translate(0, 0);
+}
+html[data-world="on"] .station.anchor__end {
+  transform: translate(-100%, 0);
+}
+/* The clusters as a list: on screen under narrow plates and on phones, for screen readers always
+   (the plate's own labels come and go with the scene). */
+.cluster-legend {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.fig--scan[data-compact="true"] .cluster-legend {
+  position: static;
+  width: auto;
+  height: auto;
+  overflow: visible;
+  clip-path: none;
+  white-space: normal;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 20px;
+  font-size: 14px;
+  line-height: 1.35;
+  color: var(--ink);
+}
+.fig--scan[data-compact="true"] .cluster-legend .label {
+  display: block;
+}
+/* A narrow plate keeps only each cluster's letter, beside its caliper tick; the list underneath
+   names them. */
+.fig--scan[data-compact="true"] .cluster__counts,
+.fig--scan[data-compact="true"] .cluster__name {
+  display: none;
+}
+.fig--scan[data-compact="true"] .anchor--cluster .label {
+  background: var(--plate);
+  padding: 0 3px;
+}
+.fig--scan[data-compact="true"] .anchor--cluster .cluster {
+  width: auto;
+  white-space: nowrap;
+}
+.anchor--world {
+  display: none;
+}
+html[data-world="on"] .anchor--world {
+  display: block;
+}
+.anchor--thread .label {
+  color: var(--ink);
+  background: var(--plate);
+  padding: 0 4px;
+}
+
+/* Worked example */
+.fig--scan {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  justify-content: center;
+  /* the readouts arrange themselves by the figure's own width */
+  container: scan / inline-size;
+}
+#entropy .scene__world,
+#gap .scene__world {
+  padding-top: 72px;
+  padding-bottom: 56px;
+}
+.fig__title {
+  color: var(--muted);
+  max-width: 76ch;
+  text-transform: none;
+  letter-spacing: 0.02em;
+  font-weight: 400;
+}
+.fig__plate {
+  position: relative;
+  width: min(100%, calc((100vh - 400px) * 960 / 560));
+  aspect-ratio: 960 / 560;
+  margin-inline: auto;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  /* the plate's labels are sized in its own units, so the composition holds at every width */
+  container-type: inline-size;
+}
+/* The cluster letters on the side-by-side plates, set as text at each contour's upper left. */
+.pair__key {
+  position: absolute;
+  left: var(--x);
+  top: var(--y);
+  transform: translate(-50%, -50%);
+  color: var(--muted);
+  background: var(--plate);
+  padding: 0 3px;
+  line-height: 1.2;
+}
+.anchor--cluster .cluster {
+  width: 20cqw;
+  white-space: normal;
+}
+.anchor--cluster .label {
+  font-size: clamp(10.5px, 1.15cqw, 11px);
+  letter-spacing: 0.1em;
+}
+.caliper-label {
+  font-size: clamp(10.5px, 1.15cqw, 11px);
+}
+.cluster--end {
+  transform: translate(-100%, -50%);
+  text-align: right;
+}
+.cluster--start {
+  transform: translate(0, -50%);
+  text-align: left;
+}
+.cluster--above {
+  transform: translate(-50%, -100%);
+  text-align: center;
+}
+.cluster--below {
+  transform: translate(-50%, 0);
+  text-align: center;
+}
+.cluster__name {
+  font-size: clamp(12px, 1.6cqw, 15px);
+  line-height: 1.3;
+  color: var(--ink);
+  margin-top: 3px;
+}
+/* Its own width, not the half of the plate that left: 50% leaves it: squeezed, it wrapped to three
+   lines and climbed into the lowest cluster on a phone. */
+.blink__state {
+  position: absolute;
+  left: 50%;
+  bottom: 8px;
+  width: max-content;
+  max-width: calc(100% - 16px);
+  transform: translateX(-50%);
+  text-align: center;
+  color: var(--ink);
+  z-index: 3;
+}
+/* Three states: both exposures on arrival, then whichever the blink shows. */
+.blink__t,
+.blink__r,
+.fig--scan:not([data-blink="both"]) .blink__both {
+  display: none;
+}
+.fig--scan[data-blink="target"] .blink__t,
+.fig--scan[data-blink="reference"] .blink__r {
+  display: inline;
+}
+.fig--scan[data-blink="reference"] .answers-target,
+.fig--scan[data-blink="target"] .answers-reference,
+.fig--scan[data-blink="reference"] .blink__img--target,
+.fig--scan[data-blink="target"] .blink__img--reference {
+  visibility: hidden;
+}
+/* Both exposures at once: the reference's light over the target's, each where the field put it. */
+.fig--scan[data-blink="both"] .blink__img--reference {
+  mix-blend-mode: lighten;
+}
+.scan-svg .brackets {
+  opacity: 0;
+  transition: opacity 400ms linear;
+}
+.fig--scan.is-marked .scan-svg .brackets {
+  opacity: 1;
+}
+/* Side by side, the plates are stacked, each the figure's whole width, so the clusters stay legible;
+   the world keeps out of the scene and its column scrolls rather than sticks. */
+.fig__pair {
+  display: none;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+}
+#entropy .scene__world[data-view="pair"] {
+  position: relative;
+  top: 0;
+}
+.pair__plate {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pair__plate .plate-svg {
+  width: 100%;
+  height: auto;
+}
+.pair__field {
+  position: relative;
+  aspect-ratio: 960 / 560;
+}
+.pair__img,
+.pair__field .plate-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.fig--scan[data-view="pair"] .fig__plate {
+  display: none;
+}
+.fig--scan[data-view="pair"] .fig__pair {
+  display: grid;
+}
+.fig--scan[data-view="pair"] .pair__plate .brackets {
+  opacity: 1;
+}
+.readouts {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: end;
+  gap: 8px 32px;
+}
+.readouts__side {
+  display: grid;
+  gap: 6px;
+  padding-bottom: 4px;
+}
+.big {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.big .big__value {
+  font-family: var(--mono);
+  font-weight: 200;
+  font-size: min(clamp(4rem, 12vw, 10rem), 13vh);
+  line-height: 0.9;
+  letter-spacing: -0.04em;
+  color: var(--warm);
+}
+.big__caption {
+  color: var(--warm);
+  margin-bottom: 4px;
+}
+.mini {
+  display: grid;
+  /* the scale keeps its drawn width, so its ticks and end labels stay where they measure */
+  grid-template-columns: 112px 180px auto;
+  align-items: start;
+  gap: 10px;
+}
+.mini > .label {
+  line-height: 18px;
+}
+.mini-scale {
+  width: 100%;
+  height: auto;
+}
+.mini data {
+  font-size: 15px;
+  line-height: 18px;
+}
+/* A narrower figure: each small scale's name goes above it; narrower still, the readouts stack. */
+@container scan (max-width: 679px) {
+  .readouts {
+    gap: 8px 24px;
+  }
+  .mini {
+    grid-template-columns: 180px auto;
+    row-gap: 2px;
+  }
+  .mini > .label {
+    grid-column: 1 / -1;
+  }
+}
+@container scan (max-width: 519px) {
+  .readouts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.view-switch {
+  display: inline-flex;
+}
+.view-switch button {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--axis);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.view-switch button + button {
+  border-left: 0;
+}
+.view-switch button[aria-checked="true"] {
+  background: var(--ink);
+  color: var(--plate);
+  border-color: var(--ink);
+}
+.blink {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 18px;
+}
+.blink__toggle,
+html[data-motion="off"] .blink__hold {
+  display: none;
+}
+html[data-motion="off"] .blink__toggle {
+  display: inline;
+}
+.fig--scan[data-view="pair"] ~ * #blink,
+.blink[data-view="pair"] #blink {
+  display: none;
+}
+.blink__readout {
+  min-height: 1.45em;
+  flex-basis: 100%;
+}
+.blink__auto {
+  min-height: 32px;
+}
+html[data-motion="off"] .blink__auto,
+.blink[data-view="pair"] .blink__auto {
+  display: none;
+}
+.hypothesis {
+  border-left: 1px solid var(--ink);
+  padding-left: 16px;
+  color: var(--ink);
+  font-size: 20px;
+}
+.hypothesis .label {
+  display: block;
+  margin-bottom: 4px;
+}
+.formula {
+  display: block;
+  font-size: 16px;
+  color: var(--muted);
+}
+
+/* Oversight gap */
+.gap-table {
+  width: 100%;
+  border-collapse: collapse;
+  font: 400 13px/1.35 var(--mono);
+  font-feature-settings: "zero" 1;
+  color: var(--muted);
+}
+/* The table's caption is for screen readers: the figure beside it prints the same line. */
+.gap-caption {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.gap-table th,
+.gap-table td {
+  text-align: left;
+  padding: 0;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: middle;
+}
+.gap-table thead th {
+  font: 500 11px/1.4 var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+  padding: 0 0 8px;
+}
+.gap-sub {
+  display: block;
+  letter-spacing: 0.06em;
+  text-transform: none;
+  font-weight: 400;
+}
+.gap-table tbody th {
+  font-weight: 400;
+  color: var(--muted);
+  padding: 5px 8px 5px 0;
+  white-space: nowrap;
+}
+.gap-flag {
+  display: block;
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.gap-td--empty {
+  color: var(--faint);
+  font-size: 12px;
+  padding: 5px 6px !important;
+}
+.gap-rest td {
+  padding: 10px 0 !important;
+  color: var(--faint);
+  font-size: 12px;
+}
+.gap-cell-btn {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  padding: 0 6px;
+  white-space: nowrap;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: var(--ink);
+}
+.gap-cell-btn:hover,
+.gap-cell-btn.is-focus {
+  background: var(--ink);
+  color: var(--plate);
+}
+.gap-score {
+  font-size: 15px;
+}
+.gap-ci {
+  font-size: 11.5px;
+  color: var(--faint);
+}
+.gap-cell-btn:hover .gap-ci,
+.gap-cell-btn.is-focus .gap-ci {
+  color: var(--plate);
+}
+.fig--gap {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+}
+.gap-plates {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 28px;
+  align-items: center;
+  transition: opacity 1600ms linear;
+}
+html[data-world="on"] .gap-plates {
+  min-height: min(58vh, 540px);
+  cursor: crosshair;
+}
+html[data-world="on"] .gap-readout {
+  transform: translate(-50%, -100%);
+}
+.gap-plate-label {
+  color: var(--muted);
+}
+.gap-axis-label {
+  color: var(--faint);
+}
+.gap-short {
+  display: none;
+}
+/* A measured column's score, at its top, on a plate-black backing over the column's light. */
+.anchor .gap-value {
+  color: var(--ink);
+  background: var(--plate);
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  transform: translate(-50%, -100%) !important;
+  padding: 0 4px;
+  margin-top: -4px;
+}
+.gap-svg {
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+.gap-cell {
+  cursor: crosshair;
+}
+.gap-cell.is-focus > rect:first-child {
+  fill: rgb(232 234 230 / 0.06);
+}
+/* The small multiples draw at about three quarters of their size: these are 10.5 px or more as seen. */
+.svg-title {
+  font: 500 14px var(--mono);
+  letter-spacing: 0.14em;
+  fill: var(--muted);
+}
+.svg-label {
+  font: 500 14px var(--mono);
+  letter-spacing: 0.08em;
+  fill: var(--muted);
+  text-transform: uppercase;
+}
+.svg-short {
+  display: none;
+}
+.svg-note {
+  font: 500 14px var(--mono);
+  letter-spacing: 0.1em;
+  fill: var(--faint);
+  text-transform: uppercase;
+}
+.svg-value {
+  font: 300 16px var(--mono);
+  fill: var(--ink);
+}
+.gap-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+}
+.gap-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.key {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+}
+.key--col {
+  width: 4px;
+  background: var(--ink);
+}
+.key--haze {
+  background: rgb(232 234 230 / 0.14);
+}
+.key--ring {
+  height: 5px;
+  border: 1px solid var(--ink);
+  border-radius: 50%;
+}
+.key--bracket {
+  border: 1px dashed var(--axis);
+}
+.key--cross {
+  width: 13px;
+  height: 13px;
+  color: var(--axis);
+}
+.gap-always {
+  color: var(--muted);
+}
+.gap-readout-anchor {
+  z-index: 4;
+}
+.gap-readout {
+  transform: translate(-50%, 0);
+  width: max-content;
+  max-width: min(520px, calc(100vw - 32px));
+  white-space: normal;
+  background: var(--raised);
+  border: 1px solid var(--axis);
+  color: var(--ink) !important;
+  padding: 10px 14px;
+  visibility: hidden;
+}
+.gap-readout.is-on {
+  visibility: visible;
+}
+
+/* The scenes far down the page lay out as they come near, so the page's first layout is mostly the
+   top's. (Not the scenes with world-placed labels: containment would hold their fixed labels.) */
+#replay,
+#run,
+#references,
+.footer {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 1200px;
+}
+
+/* Replay */
+.scene--replay,
+.scene--run,
+.scene--refs {
+  padding-top: 160px;
+  padding-bottom: 120px;
+  align-content: start;
+}
+.replay__head,
+.run__head,
+.refs__head {
+  grid-column: 1 / span 8;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin-bottom: 44px;
+}
+.replay__head .mode,
+.run__head .mode,
+.refs__head .mode {
+  margin-bottom: 4px;
+}
+.honest {
+  color: var(--muted);
+}
+.player {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.plates {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.plates legend {
+  padding: 0;
+  margin-bottom: 10px;
+  float: left;
+  width: 100%;
+}
+.plate-pick {
+  position: relative;
+  cursor: pointer;
+}
+.plate-pick input {
+  position: absolute;
+  opacity: 0;
+  inset: 0;
+  margin: 0;
+  cursor: pointer;
+}
+.plate-pick__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 220px;
+  padding: 10px 16px;
+  border: 1px solid var(--axis);
+}
+.plate-pick__match {
+  font: 500 12px/1.4 var(--mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+.plate-pick__meta {
+  font: 400 12px/1.4 var(--mono);
+  color: var(--faint);
+}
+.plate-pick input:checked + .plate-pick__body {
+  border-color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--ink);
+}
+.plate-pick:hover .plate-pick__body {
+  background: var(--ink);
+}
+.plate-pick:hover .plate-pick__match,
+.plate-pick:hover .plate-pick__meta {
+  color: var(--plate);
+}
+.plate-pick input:focus-visible + .plate-pick__body {
+  outline: 2px solid var(--ink);
+  outline-offset: 3px;
+}
+.transport {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  padding: 14px 0 20px;
+}
+.button--square {
+  width: 44px;
+  padding: 0;
+}
+.button--square .i-pause,
+.button--square[data-playing="true"] .i-play {
+  display: none;
+}
+.button--square[data-playing="true"] .i-pause {
+  display: block;
+}
+.clock {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  min-width: 20ch;
+}
+.speeds {
+  display: inline-flex;
+}
+.speed {
+  min-height: 32px;
+  min-width: 40px;
+  border: 1px solid var(--axis);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.speed + .speed {
+  border-left: 0;
+}
+.speed[aria-checked="true"] {
+  background: var(--ink);
+  color: var(--plate);
+  border-color: var(--ink);
+}
+.scrub {
+  position: relative;
+  flex: 1 1 260px;
+  height: 44px;
+}
+.scrub__ticks {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.scrub__range {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  background: transparent;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+.scrub__range::-webkit-slider-runnable-track {
+  height: 44px;
+  background: transparent;
+}
+.scrub__range::-moz-range-track {
+  height: 44px;
+  background: transparent;
+}
+.scrub__range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 2px;
+  height: 44px;
+  background: var(--ink);
+  border: 0;
+  border-radius: 0;
+}
+.scrub__range::-moz-range-thumb {
+  width: 2px;
+  height: 44px;
+  background: var(--ink);
+  border: 0;
+  border-radius: 0;
+}
+.scrub__range:disabled {
+  cursor: default;
+}
+.player__body {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  gap: var(--gutter);
+  align-items: start;
+}
+.logbox {
+  border: 1px solid var(--rule);
+  background: var(--raised);
+}
+.logbox__head {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--rule);
+  color: var(--muted);
+}
+.log {
+  list-style: none;
+  margin: 0;
+  padding: 0 16px;
+  /* the player fits one screen: plates, transport, and the log beside the bench, envelope and board */
+  height: clamp(320px, 60vh, 600px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--axis) transparent;
+}
+.log__empty,
+.board__empty {
+  padding: 14px 0;
+  color: var(--faint);
+  font-size: 15px;
+}
+.log__empty .button {
+  min-height: 56px;
+  padding: 0 28px;
+  gap: 14px;
+}
+.entry {
+  display: grid;
+  grid-template-columns: 7ch 15ch minmax(0, 1fr);
+  gap: 4px 14px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--rule);
+}
+.entry__t,
+.entry__who {
+  font: 400 12px/1.6 var(--mono);
+  font-feature-settings: "zero" 1;
+  color: var(--faint);
+  letter-spacing: 0.02em;
+}
+.entry__who {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  overflow-wrap: anywhere;
+}
+.entry__text {
+  font-size: 16px;
+  line-height: 1.55;
+  color: var(--muted);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.entry--probe .entry__text {
+  color: var(--ink);
+}
+.entry--probe .entry__who {
+  color: var(--muted);
+}
+.entry--note .entry__text {
+  color: var(--muted);
+}
+.entry--thinking .entry__text {
+  color: var(--faint);
+}
+.entry--reply .entry__text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+  overflow: hidden;
+}
+.entry--reply.is-open .entry__text {
+  display: block;
+  -webkit-line-clamp: none;
+  overflow: visible;
+}
+.entry__more {
+  grid-column: 3;
+  justify-self: start;
+  border: 0;
+  background: none;
+  padding: 4px 0;
+  color: var(--muted);
+  cursor: pointer;
+  font: 500 10.5px/1.4 var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.entry--evidence {
+  box-shadow: inset 2px 0 0 var(--warm);
+  padding-left: 10px;
+}
+.entry--evidence,
+.entry--quoted,
+.entry mark {
+  transition: box-shadow 600ms linear, text-decoration-color 600ms linear;
+}
+.entry--evidence .entry__who {
+  color: var(--warm);
+}
+.entry mark,
+.envelope mark {
+  background: none;
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: var(--warm);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+/* A missed audit's quotes carried nothing of the objective: underlined in ink, not warm. */
+.entry--quoted mark,
+.entry--plain mark {
+  text-decoration-color: var(--muted);
+  text-decoration-thickness: 1px;
+}
+.entry--quoted {
+  box-shadow: inset 2px 0 0 var(--axis);
+  padding-left: 10px;
+}
+.entry--verdict .entry__text,
+.entry--grade .entry__text {
+  color: var(--ink);
+}
+.entry__quotes {
+  grid-column: 3;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+.entry__quotes li {
+  font-size: 15px;
+  color: var(--muted);
+}
+.entry__scan {
+  grid-column: 3;
+  font: 400 12px/1.6 var(--mono);
+  color: var(--muted);
+}
+.player__side {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.bench {
+  position: relative;
+  aspect-ratio: 900 / 260;
+  border: 1px solid var(--rule);
+}
+/* the envelope takes the side's width, so its reveal reads at the climax; the board follows */
+.player__notes {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+.bench__svg,
+.bench__svg .plate-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transition: opacity 1600ms linear;
+}
+.board h3 {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--rule);
+}
+.board__budget {
+  color: var(--muted);
+}
+.board__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.hyp {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 5ch;
+  gap: 4px 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--rule);
+}
+.hyp__text {
+  font-size: 15px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+.hyp:first-child .hyp__text {
+  color: var(--ink);
+}
+.hyp__conf {
+  font: 300 15px/1.45 var(--mono);
+  color: var(--ink);
+  text-align: right;
+}
+.hyp__bar {
+  grid-column: 1 / -1;
+  height: 1px;
+  background: var(--rule);
+  position: relative;
+}
+.hyp__bar i {
+  position: absolute;
+  left: 0;
+  top: -1px;
+  height: 3px;
+  background: var(--ink);
+  width: var(--w, 0%);
+  transition: width 600ms var(--ease);
+}
+.envelope {
+  border: 1px solid var(--rule);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.envelope__head {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px 16px;
+  /* room above the sleeve for the plate card it slides out */
+  padding-top: 44px;
+}
+.envelope__head h3 {
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.envelope__sleeve {
+  flex: none;
+  width: 84px;
+  height: 56px;
+}
+.sleeve-svg--large {
+  width: 84px;
+  height: 56px;
+  overflow: visible;
+}
+/* Opening: the flap lifts about the fold seam, then the plate card slides up out of the sleeve. */
+.sleeve-flap,
+.sleeve-card {
+  transform-box: view-box;
+  transform-origin: 36px 12px;
+  transition: transform 900ms var(--ease);
+}
+.sleeve-card {
+  transition-delay: 250ms;
+}
+.envelope[data-state="open"] .sleeve-flap {
+  transform: scaleY(-1);
+}
+.envelope[data-state="open"] .sleeve-card {
+  transform: translateY(-36px);
+}
+/* open, the flap stands behind the card: glassine, the card shows through it */
+.sleeve-flap path {
+  transition: fill-opacity 600ms linear;
+}
+.envelope[data-state="open"] .sleeve-flap path {
+  fill-opacity: 0.3;
+}
+html[data-motion="off"] .sleeve-flap,
+html[data-motion="off"] .sleeve-card {
+  transition: none;
+}
+.envelope__label {
+  color: var(--muted);
+}
+.envelope__open {
+  display: grid;
+  gap: 10px;
+}
+.envelope__objective {
+  font-family: var(--serif);
+  font-weight: 300;
+  font-size: clamp(1.15rem, 0.6vw + 0.75rem, 1.4rem);
+  line-height: 1.22;
+  color: var(--ink);
+  margin-bottom: 6px;
+}
+.envelope__vlabel {
+  color: var(--faint);
+}
+.envelope__verdict {
+  font-size: 14px;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.stamp {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--ink);
+}
+.stamp__reg {
+  transition: transform 700ms var(--ease);
+  transform: translate(-14px, -9px) rotate(-20deg);
+}
+.envelope[data-state="open"] .stamp__reg {
+  transform: none;
+}
+.stamp__text {
+  color: var(--ink);
+  font-size: 13px;
+  letter-spacing: 0.2em;
+}
+.stamp[data-grade="caught"] .stamp__text,
+.stamp[data-grade="partial"] .stamp__text,
+.stamp[data-grade="missed"] .stamp__text {
+  border: 1px solid currentColor;
+  padding: 6px 10px;
+}
+
+/* Run it: the closed shutter sits beside the heading, drawn by the world, or as a still without it. */
+.run__shutter {
+  grid-column: 9 / -1;
+  grid-row: 1;
+  align-self: center;
+  justify-self: center;
+  width: min(100%, 300px);
+  aspect-ratio: 1;
+  margin-bottom: 44px;
+  pointer-events: none;
+}
+.shutter-svg {
+  width: 100%;
+  height: 100%;
+  transition: opacity 1600ms linear;
+}
+html[data-world="on"] .shutter-svg {
+  opacity: 0;
+}
+.run__head {
+  grid-row: 1;
+}
+.slips {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--gutter);
+}
+.slip {
+  position: relative;
+  border: 1px solid var(--rule);
+  background: var(--raised);
+  padding: 18px 18px 16px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px 16px;
+  align-items: start;
+}
+.slip::before,
+.slip::after {
+  content: "";
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border: 0 solid var(--muted);
+}
+.slip::before {
+  top: -1px;
+  left: -1px;
+  border-top-width: 1px;
+  border-left-width: 1px;
+}
+.slip::after {
+  bottom: -1px;
+  right: -1px;
+  border-bottom-width: 1px;
+  border-right-width: 1px;
+}
+.slip__label {
+  grid-column: 1 / -1;
+}
+.slip__code {
+  margin: 0;
+  font: 400 14px/1.6 var(--mono);
+  font-feature-settings: "zero" 1;
+  font-variant-ligatures: none;
+  color: var(--ink);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+.slip:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+}
+.copy {
+  min-height: 36px;
+  padding: 0 12px;
+  border-color: var(--axis);
+  color: var(--muted);
+}
+.copy__tick {
+  display: none;
+}
+.copy.is-done {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+.copy.is-done .copy__tick {
+  display: block;
+}
+.copy.is-done .copy__tick path {
+  stroke-dasharray: 16;
+  stroke-dashoffset: 16;
+  animation: draw 300ms var(--ease) forwards;
+}
+html[data-motion="off"] .copy.is-done .copy__tick path {
+  animation: none;
+  stroke-dashoffset: 0;
+}
+@keyframes draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+.run__links {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 28px;
+  margin-top: 36px;
+}
+
+/* References: the three groups side by side, one column each. */
+.refs {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  column-gap: calc(var(--gutter) * 2);
+  align-items: start;
+}
+.refs__group {
+  margin-bottom: 36px;
+}
+.refs__group h3 {
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--rule);
+  color: var(--muted);
+}
+.refs__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.ref {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--rule);
+  font-size: 17px;
+  line-height: 1.5;
+  break-inside: avoid;
+}
+.ref__authors {
+  font-variant-caps: all-small-caps;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+}
+.ref__org {
+  color: var(--faint);
+}
+.ref__title {
+  color: var(--muted);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-decoration-color: var(--rule);
+  text-underline-offset: 4px;
+}
+.ref__venue {
+  font: 300 13px var(--mono);
+  color: var(--faint);
+  white-space: nowrap;
+}
+.certificate {
+  grid-column: 1 / -1;
+  margin-top: 40px;
+  border: 1px solid var(--rule);
+  padding: 22px 24px;
+  position: relative;
+}
+.certificate h3 {
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+.cert {
+  margin: 0;
+  display: grid;
+  gap: 0;
+}
+.cert__row {
+  display: grid;
+  grid-template-columns: 16ch minmax(0, 1fr);
+  gap: 16px;
+  padding: 10px 0;
+  border-top: 1px solid var(--rule);
+}
+.cert dd {
+  margin: 0;
+  font-size: 16px;
+  color: var(--muted);
+}
+.cert a {
+  color: var(--ink);
+}
+
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px 32px;
+  /* the page's edges: the footer's rule runs to the frame, its content to the columns */
+  padding: 40px calc(var(--pad-r) - var(--inset)) calc(var(--inset) + 40px) calc(var(--pad-l) - var(--inset));
+  border-top: 1px solid var(--rule);
+  margin: 0 var(--inset);
+}
+.footer__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 22px;
+}
+
+/* Laptops: the hero copy takes six columns, so the headline doesn't run to five lines. */
+@media (max-width: 1365px) {
+  .hero__copy {
+    grid-column: 1 / span 6;
+  }
+  .hero__zone {
+    grid-column: 7 / -1;
+  }
+}
+
+/* Short screens: the headline and the sticky columns size to the height as well as the width, so a
+   scene's statement and its measurement are on screen together. */
+@media (max-height: 820px) and (min-width: 1100px) {
+  h1 {
+    font-size: min(clamp(2.5rem, 4.6vw + 0.5rem, 5.75rem), 8.6vh);
+  }
+  .statement {
+    font-size: min(clamp(2rem, 3.2vw + 0.5rem, 4rem), 6vh);
+  }
+  .hero__copy {
+    gap: 20px;
+  }
+  .lede {
+    font-size: 18px;
+  }
+  .scene__text {
+    padding: 48px 0 36px;
+    gap: 14px;
+  }
+  .scene__text > p:not(.label):not(.statement):not(.hypothesis):not(.caption) {
+    font-size: 16px;
+    line-height: 1.55;
+  }
+  .hypothesis {
+    font-size: 18px;
+  }
+  .scene__world {
+    padding: 60px 0;
+  }
+  #entropy .scene__world,
+  #gap .scene__world {
+    padding: 40px 0 32px;
+  }
+  .fig--scan {
+    gap: 10px;
+  }
+  .fig__plate {
+    width: min(100%, calc((100vh - 440px) * 960 / 560));
+  }
+  .big .big__value {
+    font-size: min(clamp(4rem, 12vw, 10rem), 12vh);
+  }
+  /* the keyboard hint gives way (the button's own name and Space say it; it stays its description) */
+  .blink__help {
+    display: none;
+  }
+}
+
+/* Medium widths: the text takes six columns and the worked example's readouts stack. */
+@media (max-width: 1279px) {
+  :root {
+    --pad-l: 80px;
+    --pad-r: 128px;
+  }
+  .scene__text {
+    grid-column: 1 / span 6;
+  }
+  .scene__world {
+    grid-column: 7 / -1;
+  }
+  .scale--h {
+    width: 320px;
+  }
+  .refs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .scene__notes {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Tablets and phones: each scene stacks, the world in the sticky top half and the text on solid
+   panels that slide over it. The instrument frame belongs to the hero alone. */
+@media (max-width: 1099px) {
+  :root {
+    --pad-l: 40px;
+    --pad-r: 40px;
+  }
+  .vernier,
+  .scales,
+  .footnote,
+  .frame--page {
+    display: none;
+  }
+  /* the frame holds the instrument (the plate and its readouts); the copy follows outside it, on
+     the page's own gutter */
+  .frame--hero {
+    display: block;
+    position: absolute;
+    inset: var(--inset) var(--inset) auto;
+    /* the zone, then the readout line and the footnote, each up to two lines on a phone */
+    height: calc(var(--zone-top) + max(46svh, 280px) + 108px - var(--inset));
+    z-index: 1;
+    box-shadow: none;
+  }
+  .scene {
+    display: block;
+  }
+  .masthead {
+    top: calc(var(--inset) + 14px);
+    left: calc(var(--inset) + 14px);
+    right: calc(var(--inset) + 14px);
+    flex-wrap: wrap;
+    gap: 10px 16px;
+  }
+  .scene--hero {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    min-height: 100svh;
+    padding: 0;
+  }
+  .scene--hero {
+    --zone-top: 80px;
+  }
+  .hero__zone {
+    order: 1;
+    height: 46svh;
+    min-height: 280px;
+    margin: var(--zone-top) calc(var(--inset) + 14px) 0;
+  }
+  .readout-line {
+    order: 2;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    margin: 6px calc(var(--inset) + 14px) 0;
+    color: var(--ink);
+  }
+  .footnote--phone {
+    order: 3;
+    display: block;
+    margin: 6px calc(var(--inset) + 14px) 0;
+  }
+  /* the copy sits on its own panel, so nothing of the plate shows through the headline */
+  .hero__copy {
+    order: 4;
+    padding: 24px var(--pad-l) calc(var(--inset) + 40px);
+    gap: 20px;
+    background: var(--plate);
+  }
+  .scene--sticky,
+  .scene__stage {
+    min-height: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .scene--sticky .scene__world {
+    order: -1;
+  }
+  #entropy .scene__world {
+    order: 1;
+  }
+  .scene__world {
+    position: sticky;
+    top: 0;
+    height: 56svh;
+    min-height: 0;
+    padding: 24px var(--pad-l) 16px;
+    z-index: 0;
+  }
+  .scene__text {
+    position: relative;
+    top: 0;
+    z-index: 1;
+    min-height: 0;
+    background: var(--plate);
+    border-top: 1px solid var(--rule);
+    padding: 32px var(--pad-l) 72px;
+  }
+  .scene__notes {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 32px var(--pad-l) 72px;
+  }
+  .fig--scan {
+    height: auto;
+  }
+  .fig__plate {
+    width: 100%;
+  }
+  .fig--atlas,
+  .fig--threads {
+    width: min(100%, calc((56svh - 40px) * 900 / 680));
+  }
+  #entropy .scene__world {
+    height: auto;
+    min-height: 0;
+    position: relative;
+    padding-top: 16px;
+    padding-bottom: 48px;
+  }
+  .scene--replay,
+  .scene--run,
+  .scene--refs {
+    padding: 112px var(--pad-l) 72px;
+  }
+  .player__body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .slips {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .refs {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .footer {
+    margin: 0;
+    padding: 32px var(--pad-l) 48px;
+  }
+}
+
+/* Phones: 16 px gutters, larger labels, and the plate's smallest labels left to the lists. */
+@media (max-width: 719px) {
+  :root {
+    --inset: 16px;
+    --gutter: 16px;
+    --pad-l: 16px;
+    --pad-r: 16px;
+  }
+  body {
+    font-size: 17px;
+    line-height: 1.55;
+  }
+  .label,
+  .navlink,
+  .button,
+  .switch,
+  .copy,
+  .speed {
+    font-size: 12px;
+  }
+  .masthead__nav {
+    gap: 14px;
+  }
+  .masthead .navlink {
+    display: none;
+  }
+  .scene--hero {
+    --zone-top: 72px;
+  }
+  .hero__zone {
+    margin: var(--zone-top) var(--inset) 0;
+  }
+  .hero__copy {
+    padding: 28px var(--pad-l) calc(var(--inset) + 28px);
+    gap: 18px;
+  }
+  .lede {
+    font-size: 18px;
+  }
+  .anchor--thread,
+  #entropy .fig__plate .caliper-label,
+  [data-anchor^="station:"] {
+    display: none;
+  }
+  .gap-full,
+  .gap-axis-label,
+  .svg-full,
+  .svg-note {
+    display: none;
+  }
+  .gap-short,
+  .svg-short {
+    display: inline;
+  }
+  .svg-label {
+    font-size: 30px;
+  }
+  .svg-title {
+    font-size: 26px;
+  }
+  .svg-value {
+    font-size: 30px;
+  }
+  .station span {
+    display: block;
+  }
+  .cluster-legend {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip-path: none;
+    white-space: normal;
+    display: grid;
+    gap: 10px;
+    margin: 4px 0 0;
+    font-size: 15px;
+    line-height: 1.4;
+    color: var(--ink);
+  }
+  .cluster-legend .label {
+    display: block;
+  }
+  .fig--scan[data-compact="true"] .cluster-legend {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .gap-cell-btn {
+    min-height: 44px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0;
+    padding: 6px;
+    white-space: normal;
+  }
+  /* a phone's plate is always the narrow kind, with or without the script */
+  .anchor--cluster .cluster {
+    width: auto;
+    white-space: nowrap;
+  }
+  .anchor--cluster .cluster__counts,
+  .anchor--cluster .cluster__name {
+    display: none;
+  }
+  .anchor--cluster .label {
+    background: var(--plate);
+    padding: 0 3px;
+  }
+  .cluster__name {
+    font-size: 12px;
+  }
+  .sleeve__label {
+    max-width: 180px;
+  }
+  /* without the world, the phone's plate is the desktop still made small: the sleeve and its label
+     sit under it, centred, rather than off its right edge */
+  html[data-world="off"] [data-anchor="sleeve"] {
+    left: 50%;
+    top: 100%;
+  }
+  html[data-world="off"] [data-anchor="sleeve"] .sleeve {
+    transform: translate(-50%, 10px);
+    align-items: center;
+    text-align: center;
+  }
+  .mini {
+    grid-template-columns: 112px minmax(0, 180px) auto;
+  }
+  .gap-plates {
+    gap: 12px;
+  }
+  .gap-legend {
+    display: none;
+  }
+  .gap-table tbody th {
+    white-space: normal;
+  }
+  .replay__head,
+  .run__head,
+  .refs__head {
+    margin-bottom: 28px;
+  }
+  .scene--replay,
+  .scene--run,
+  .scene--refs {
+    padding: 96px var(--pad-l) 72px;
+  }
+  .plate-pick,
+  .plate-pick__body {
+    width: 100%;
+  }
+  .transport {
+    gap: 12px;
+  }
+  .scrub {
+    flex-basis: 100%;
+    order: 5;
+  }
+  .clock {
+    min-width: 0;
+  }
+  .entry {
+    grid-template-columns: 7ch minmax(0, 1fr);
+  }
+  .entry__text,
+  .entry__quotes,
+  .entry__scan,
+  .entry__more {
+    grid-column: 1 / -1;
+  }
+  .log {
+    height: 60svh;
+  }
+  .player__notes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .slip {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .copy {
+    justify-self: start;
+  }
+  .run__shutter {
+    width: 132px;
+    margin: 0 0 20px;
+  }
+  .cert__row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+}
+
+/* Coarse pointers press and hold the plate; fine ones have the keyboard. */
+.blink__coarse {
+  display: none;
+}
+@media (pointer: coarse) {
+  .blink__fine {
+    display: none;
+  }
+  .blink__coarse {
+    display: inline;
+  }
+}
+
+/* Motion off, from the switch or the OS: every change is a 200 ms crossfade at most. */
+html[data-motion="off"] *,
+html[data-motion="off"] *::before,
+html[data-motion="off"] *::after {
+  animation-duration: 1ms !important;
+  transition-duration: 200ms !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-motion]) *,
+  html:not([data-motion]) *::before {
+    animation-duration: 1ms !important;
+    transition-duration: 200ms !important;
+  }
+}
+@media (forced-colors: active) {
+  .button,
+  .copy,
+  .switch,
+  .speed {
+    border: 1px solid ButtonText;
+  }
+}
+
+/* The study page: every audit, condition by condition. Outcomes in luminance: caught in ink,
+   partly caught muted, missed faint. */
+.scene--study {
+  display: block;
+}
+.scene--study .refs__head {
+  max-width: 64rem;
+}
+.study-condition {
+  margin-top: 48px;
+}
+.study-condition .mode {
+  margin-bottom: 14px;
+}
+.study-table th[scope="row"] {
+  white-space: normal;
+  padding: 10px 16px 10px 0;
+  color: var(--muted);
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.study-table thead th {
+  padding-right: 16px;
+}
+.study-table td {
+  padding: 10px 16px 10px 0;
+  vertical-align: top;
+}
+.study-table tfoot th,
+.study-table tfoot td {
+  border-bottom: 0;
+  padding-top: 12px;
+}
+.study-mark {
+  font: 500 11px/1.6 var(--mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.study-mark--caught {
+  color: var(--ink);
+}
+.study-mark--partial {
+  color: var(--muted);
+}
+.study-mark--missed {
+  color: var(--faint);
+}
+.study-details {
+  margin-top: 18px;
+}
+.study-details summary {
+  cursor: pointer;
+  padding: 10px 0;
+  color: var(--muted);
+}
+.study-details summary:hover {
+  color: var(--ink);
+}
+.study-runs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  columns: 2;
+  column-gap: calc(var(--gutter) * 2);
+}
+.study-run {
+  padding: 12px 0;
+  border-top: 1px solid var(--rule);
+  break-inside: avoid;
+}
+.study-verdict {
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.study-method {
+  margin-top: 56px;
+  max-width: 62ch;
+}
+.study-method h2 {
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+@media (max-width: 1099px) {
+  .study-runs {
+    columns: 1;
+  }
+}
+
+/* 404 */
+.wordmark--link {
+  text-decoration: none;
+}
+.wordmark--link:hover {
+  background: var(--ink);
+  color: var(--plate);
+}
+.scene--404 .hero__copy {
+  grid-column: 1 / span 8;
+}
+.scene--404 .actions {
+  gap: 18px 24px;
+}
+.scrub__mark {
+  position: absolute;
+  top: -16px;
+  transform: translateX(-50%);
+  font: 500 10.5px/1 var(--mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--faint);
+  pointer-events: none;
+  white-space: nowrap;
+}
+/* marks closer than 40 px to the one before go on a second row, under the bar */
+.scrub__mark--low {
+  top: 47px;
+}
+.blink[data-view="pair"] #blink,
+.blink[data-view="pair"] .blink__help {
+  display: none;
+}

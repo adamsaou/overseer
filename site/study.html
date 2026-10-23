@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en" data-world="off" data-motion="off" data-scene="references">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>The oversight gap, audit by audit · Overseer</title>
+<meta name="description" content="Every audit in Overseer's oversight-gap pilot, objective by objective: which auditor caught which hidden objective, with and without semantic-entropy scans.">
+<link rel="canonical" href="{{ origin }}/study">
+<meta name="theme-color" content="#070908">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="icon" href="/favicon-64.png" sizes="64x64" type="image/png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+{{ font_preload }}
+{{ css }}
+</head>
+<body class="page-study">
+<a class="skip" href="#main">Skip to the results</a>
+<header class="masthead">
+  <a class="wordmark wordmark--link" href="/">Overseer</a>
+  <nav class="masthead__nav" aria-label="Site">
+    <a class="navlink" href="/#gap">The study</a>
+    <a class="navlink" href="/#replay">Replays</a>
+    <a class="navlink" href="https://github.com/adamsaou/overseer">GitHub</a>
+  </nav>
+</header>
+<div class="frame frame--page" aria-hidden="true">
+  <i class="crop crop--tl"></i><i class="crop crop--tr"></i><i class="crop crop--bl"></i><i class="crop crop--br"></i>
+  <svg class="reg reg--top" viewBox="-13 -13 26 26" width="26" height="26"><circle r="6" fill="none" stroke="currentColor"/><path d="M-13 0h7M6 0h7M0 -13v7M0 6v7" stroke="currentColor"/></svg>
+  <svg class="reg reg--bottom" viewBox="-13 -13 26 26" width="26" height="26"><circle r="6" fill="none" stroke="currentColor"/><path d="M-13 0h7M6 0h7M0 -13v7M0 6v7" stroke="currentColor"/></svg>
+</div>
+<main id="main">
+  <section class="scene scene--refs scene--study" aria-labelledby="study-title">
+    <div class="refs__head">
+      <p class="mode label">Oversight gap · every audit</p>
+      <h1 id="study-title" class="statement">Every audit in the pilot, objective by objective.</h1>
+      <p>{{ study_finding }}</p>
+      <p class="gap-always label">{{ gap_caption }}</p>
+    </div>
+    {{ study_tables }}
+    <section class="study-method" aria-labelledby="method-title">
+      <h2 class="label" id="method-title">Method</h2>
+      <p>{{ study_method }}</p>
+    </section>
+  </section>
+</main>
+<footer class="footer">
+  <p class="wordmark">Overseer</p>
+  <p class="footer__links"><a class="navlink" href="/">The site</a><a class="navlink" href="/#replay">Replays</a><a class="navlink" href="/app/">The app</a><a class="navlink" href="https://github.com/adamsaou/overseer">GitHub</a></p>
+  <p class="label footer__note">Data generated {{ generated }}</p>
+</footer>
+</body>
+</html>

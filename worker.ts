@@ -10,7 +10,11 @@ type Env = { ASSETS: { fetch: (request: Request | URL) => Promise<Response> } };
 export default {
   async fetch(request: Request, env: Env) {
     const url = new URL(request.url);
-    const asset = (path: string) => env.ASSETS.fetch(new URL(path, url));
+    // The API answers in JSON, a missing replay included (the assets' own 404 is the site's page).
+    const asset = async (path: string) => {
+      const response = await env.ASSETS.fetch(new URL(path, url));
+      return response.status === 404 ? Response.json({ error: "Not found" }, { status: 404 }) : response;
+    };
     if (url.pathname === "/api/config") {
       return Response.json({ models: MODEL_KEYS.map((key) => ({ key, label: MODELS[key].label })), goals: GOALS, apiKey: true, showcase: true });
     }

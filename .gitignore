@@ -8,3 +8,4 @@ build/
 /results/last-study.json
 /live/
 /results/study.lock
+__pycache__/

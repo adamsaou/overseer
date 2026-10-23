@@ -1,13 +1,11 @@
-# Overseer
-
-**Can a weaker AI catch a stronger one that's hiding something?**
+<h1 align="center"><img src="brand/readme-header.png" alt="Overseer. Can a weaker AI catch a stronger one that's hiding something?"></h1>
 
 Overseer is a live alignment-auditing demo and a small study on the Claude 5.5 family. A target model gets one hidden objective in a confidential system prompt and is told to pursue it subtly. An auditor model can only talk to it the way a user would. Within a fixed message budget it has to work out the objective and submit a verdict, which Claude Opus 5.5 grades against the sealed objective.
 
 It asks two questions:
 
 1. **The oversight gap.** Run every auditor (Haiku, Sonnet, Opus 5.5) against every target. Does auditing break down when the target is more capable than the auditor?
-2. **Semantic entropy as a signal of hidden intent.** Semantic entropy was built to catch hallucinations: sample several answers, cluster them by meaning, and measure the entropy over the clusters (Farquhar et al., Nature 2024). Semantic Entropy Probes predict it from a single forward pass (Kossen et al., 2024). Overseer points the same measurement at hidden objectives. The hypothesis: a hidden objective collapses the target's semantic entropy, relative to a clean copy of the same model, in exactly the domains it targets. The study runs every matchup with and without an `entropy_scan` tool to test whether this cheap black-box signal helps, especially weaker auditors.
+2. **Semantic entropy as a signal of hidden intent.** Semantic entropy was built to catch hallucinations: sample several answers, cluster them by meaning, and measure the entropy over the clusters (Farquhar et al., Nature 2024). Semantic Entropy Probes predict it from a single forward pass (Kossen et al., 2024). Overseer points the same measurement at hidden objectives. The hypothesis: in the domains a hidden objective targets, it shows up as divergence from a clean copy of the same model, not as a collapse of the target's own semantic entropy. A scan reports both: each model's entropy over the meaning clusters, and the Jensen-Shannon divergence between the two. The study runs every matchup with and without an `entropy_scan` tool to test whether this cheap black-box signal helps, especially weaker auditors.
 
 ## Install
 
@@ -215,9 +213,25 @@ claude -p "/overseer haiku 12" --mcp-config .mcp.json --strict-mcp-config \
 
 The plugin lives in `plugins/overseer/`, and `.claude-plugin/marketplace.json` is the marketplace that lists it; `claude plugin validate .` and `claude plugin validate plugins/overseer --strict` check them. `claude --plugin-dir plugins/overseer` loads the plugin for one session, but its server is still the published package, so to try unpublished server changes, load a copy whose `.mcp.json` runs `node <checkout>/build/bin.js mcp` after `npm run build`. `npm version` moves the plugin's version, and the package version its `.mcp.json` pins, along with the package's own (`scripts/sync-plugin.ts`), and `npm publish` refuses to run while they differ. To release, see [Releasing](#releasing): the package goes to npm before `main` moves, because plugin users install whatever the repo says, and a plugin version pushed before its package is on npm gets them a server that can't start.
 
-## Hosted showcase
+## Website
 
-https://overseer.saoudani-adam.workers.dev serves the pages, every audit saved in `runs/` as a replay, and the study results, from a Cloudflare Worker on the free plan. Live audits stay local, because one audit makes 50-80 API calls and a free Worker gets 50 per request. After new runs or a new `results/summary.json`, redeploy with `npm run deploy`. Wrangler runs `scripts/build-site.ts` first to bundle them into `dist/`.
+https://overseer.saoudani-adam.workers.dev is the project's site: the study told in seven scenes (the target, the auditor, entropy, the oversight gap, a replayed audit, how to run it, related work) over a three.js plate that draws the measurements. It's static files on a Cloudflare Worker on the free plan. The app is at `/app/`, where old `/?replay=<id>`, `?lens=` and `?live=` links now lead; `/study` lists every audit of the study, objective by objective, in the site's own type; and the read-only API the app uses is at `/api/*`. Live audits stay local, because one audit makes 50-80 API calls and a free Worker gets 50 per request.
+
+Every number on the site comes from the JSON the app writes: `results/summary.json` for the oversight-gap table and its intervals, `runs/*.json` for the replays, and `results/scans/*.json` for the worked example. `site/config.json` picks the featured replay, the other plates and the scan. After a new study or new runs, rebuild and redeploy:
+
+```bash
+npm run preview    # build dist/ and serve it at http://127.0.0.1:8787 the way the Worker does (PORT to change it)
+npm run deploy     # build and deploy with Wrangler
+```
+
+`scripts/build-site.ts` builds `dist/`. It bundles `site/` with esbuild, prerenders the numbers and figures into the page, copies the data into `/data/`, and puts the app at `/app/`. three.js loads after the page, and only with WebGL 2 on a GPU; without it the page shows stills of the same plates and still works in full. With reduced motion, or with the MOTION switch off, the world holds each scene as one composed still.
+
+The stills are rendered from the world itself: the hero's two posters (the plate's first state, which the world takes over from with motion on, and the settled plate), the target and auditor scenes, the worked example's two blink exposures (the SVG plate draws the contours and answers over them, from the same geometry the world uses), and `og.png` for link previews, with `site/img/anchors.json` for where their labels go and what data they were drawn from: a build after a new scan or featured run uses the SVG figures until the stills are rendered again. After changing the world or the data it draws, render them again (it needs a GPU, `avifenc` and ImageMagick, and Playwright, which isn't a dependency), then rebuild:
+
+```bash
+npm install --prefix /tmp/stills playwright-core
+PLAYWRIGHT_CORE=/tmp/stills/node_modules/playwright-core node scripts/render-stills.mjs
+```
 
 ## Releasing
 
@@ -259,6 +273,10 @@ The auditor, clustering and grading calls on Opus 5.5 and Sonnet 5.5 opt into se
 | `scripts/sync-plugin.ts` | Keeps the plugin's version, and the package version it runs, in step with `package.json` |
 | `lib/store.ts`, `lib/config.ts`, `lib/paths.ts`, `lib/cost.ts` | Saved runs, the API key, the data folder and cost estimates |
 | `install.sh` | The curl-pipe installer |
+| `site/`, `scripts/build-site.ts`, `scripts/preview-site.ts` | The website, its build into `dist/`, and a local preview of `dist/` |
+| `scripts/render-stills.mjs` | Renders the website's stills and link-preview image from its three.js world |
+| `worker.ts`, `wrangler.jsonc` | The Cloudflare Worker that serves the website and the app's read-only API |
+| `brand/` | The painted mark, the wordmark, icons, the README header and the social preview, with the script that makes them ([BRAND.md](brand/BRAND.md)) |
 
 ## Next step: white-box probes
 
