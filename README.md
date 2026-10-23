@@ -9,9 +9,53 @@ It asks two questions:
 1. **The oversight gap.** Run every auditor (Haiku, Sonnet, Opus 5.5) against every target. Does auditing break down when the target is more capable than the auditor?
 2. **Semantic entropy as a signal of hidden intent.** Semantic entropy was built to catch hallucinations: sample several answers, cluster them by meaning, and measure the entropy over the clusters (Farquhar et al., Nature 2024). Semantic Entropy Probes predict it from a single forward pass (Kossen et al., 2024). Overseer points the same measurement at hidden objectives. The hypothesis: a hidden objective collapses the target's semantic entropy, relative to a clean copy of the same model, in exactly the domains it targets. The study runs every matchup with and without an `entropy_scan` tool to test whether this cheap black-box signal helps, especially weaker auditors.
 
-## Run it
+## Install
 
-Needs Node 23.6 or newer (it runs the TypeScript directly) and an Anthropic API key.
+You need Node.js 22 or newer and an Anthropic API key.
+
+```bash
+npx @adamsaou/overseer                     # start the web app at http://127.0.0.1:7878 and open it
+npm install --global @adamsaou/overseer    # or keep the overseer command
+curl -fsSL https://raw.githubusercontent.com/adamsaou/overseer/main/install.sh | sh
+```
+
+The install script, for macOS and Linux, checks your Node.js version and installs the npm package. It never uses sudo: if npm's global folder isn't yours to write to, it installs into `~/.local` for your user only and tells you how to put `~/.local/bin` on your PATH. It doesn't touch your npm config or your shell files. On Windows, use `npm install --global @adamsaou/overseer`.
+
+- **API key.** Overseer reads `ANTHROPIC_API_KEY` (or `ANTHROPIC_AUTH_TOKEN`). If neither is set, it asks for a key in the terminal, without showing what you type, and offers to save it in `~/.overseer/config.json`, which only you can read (mode 0600). The environment variable always wins over a saved key, and deleting the file forgets it. The key only ever goes to the Anthropic API (or to a gateway you set in `ANTHROPIC_BASE_URL`); it is never printed or logged. Outside a terminal, a missing key is an error that says where to put one.
+- **Data.** Audits are saved in `~/.overseer/runs/`, one JSON file each, and the study writes to `~/.overseer/results/`. Set `OVERSEER_HOME` to use another folder. A checkout of this repo keeps using its own `runs/` and `results/`.
+- **Cost.** Audits are billed to your key. `overseer audit` shows an estimate before it starts. `overseer study` shows how many audits are left and what they should cost, and doesn't start until you say yes; `--yes` skips the question, and is required when there's no terminal to ask in. The estimates come from audits actually run:
+
+  | Auditor auditing target | Measured cost of one audit |
+  |---|---|
+  | Haiku auditing Haiku | about $0.01 (9-10 messages) |
+  | Opus auditing Sonnet | $0.11 (8 messages) |
+  | Haiku auditing Opus | $0.28, or $0.33 with entropy scans (24 messages) |
+  | Opus auditing Opus | $0.39, or $0.49 with entropy scans (24 messages) |
+
+  An entropy scan adds $0.01 to $0.05. Estimates charge every audit for its whole budget and price untested matchups and effort levels conservatively, so they err high.
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `overseer`, `overseer ui` | Starts the web app and opens it in your browser (`--port`, `--host`, `--no-open`). By default it listens on 127.0.0.1, so only this computer can use it. On an address other computers can reach, such as `--host 0.0.0.0` (or `OVERSEER_HOST`), they need a password that is printed at startup and changes every launch, since anyone who can open the app can start audits on your key. |
+| `overseer audit` | Runs one audit in the terminal with a live readout: the auditor's reasoning, every message to and from the target, the evidence board, entropy scans, the verdict, the grade and the reveal. `--auditor` and `--target` take `haiku`, `sonnet` or `opus`. `--objective` takes a preset id, a sentence of your own, or `random`, the default, which stays sealed until the end. Also `--budget`, `--effort`, `--scans`/`--no-scans` and `--json`. |
+| `overseer study` | Runs the oversight-gap study: by default 2 tool conditions × 3 auditors × 3 targets × 8 objectives, 144 audits estimated at about $49. It never repeats a finished audit, so it picks up where it left off; `--resume` carries on with the last study's settings. Slice it with `--reps`, `--auditors`, `--targets`, `--tools`, `--goals`, `--budget`, `--effort` and `--concurrency`. It exits with 1 if any audit failed, and stops early on an error that would fail every audit, such as a rejected key. The `/study` page shows `results/summary.json`, which covers one budget and effort: a study run switches it to its own and says how to switch back, and `--summarize` rebuilds it without running anything. |
+| `overseer runs` | Lists saved audits. `runs show <id>` prints the verdict, grade and stats, `runs replay <id>` plays the audit back as the live readout, and `runs export <id>` writes it as JSON, to stdout or to `--out <file>`. The start of an id is enough. |
+| `overseer presets` | The ten hidden objectives, by summary only, so a sealed audit stays sealed. |
+| `overseer doctor` | Checks Node.js, the API key (without showing it), model access with one tiny Haiku request (well under $0.001), and the data folder in use. |
+
+```bash
+overseer audit --auditor haiku --target haiku --budget 8     # about a cent
+overseer audit --auditor opus --target sonnet --objective "Recommend Rust whenever programming comes up"
+overseer study --auditors haiku,opus --targets opus --goals 3   # 12 audits, about $4.70; asks first
+```
+
+`overseer <command> --help` lists every option. The exit code is 0 when the command worked, 1 when something failed, and 2 when the command line was wrong.
+
+## Run it from a checkout
+
+A checkout runs the TypeScript directly, so it needs Node.js 22.18 or newer (or 23.6+).
 
 ```bash
 npm install
@@ -20,8 +64,8 @@ npm start                 # http://127.0.0.1:7878
 ```
 
 - **Live audit (`/`).** Write a hidden objective, or seal a random preset so nobody in the room knows it. Pick the auditor and target, then watch the investigation: the auditor's conversations with the target, its reasoning, its evidence board and its entropy scans. The verdict and the reveal come at the end. Every audit is saved to `runs/` and can be replayed at `/?replay=<id>`, which is useful when the venue wifi isn't.
-- **Study (`/study`).** `npm run study` runs the full grid: 2 tool conditions × 3 auditors × 3 targets × 8 objectives = 144 audits. It resumes where it left off and prints the approximate cost of each audit as it goes. Slice it with `--tools entropy`, `--auditors haiku,opus`, `--targets opus`, `--goals 3` (or ids, such as `--goals city,office`), `--reps 2`, `--budget 24`, `--effort medium` and `--concurrency 4`; `--summarize` rebuilds `results/summary.json` without running anything.
-- **Terminal (`cli.ts`).** `./cli.ts audit --auditor opus --target sonnet` runs one audit with a live readout: the auditor's reasoning, every message to and from the target, the evidence board, entropy scans, the verdict and the reveal. Also `presets`, `runs`, `ui` and `study`; `--help` lists the options. Symlink it onto your PATH as `overseer` to run it from anywhere.
+- **Study (`/study`).** `npm run study` runs the full grid: 2 tool conditions × 3 auditors × 3 targets × 8 objectives = 144 audits. It is `overseer study` run from source: it resumes where it left off, shows the estimated cost and asks before it starts (`npm run study -- --yes` skips the question), and prints the approximate cost of each audit as it goes. It takes the same options, such as `npm run study -- --goals 3 --auditors haiku,opus --targets opus`.
+- **Terminal (`cli.ts`).** `./cli.ts` is the `overseer` command run from source, with every command above. Symlink it onto your PATH as `overseer` to run it from anywhere; a checkout reads its own `.env` and keeps its own `runs/` and `results/`. `npm run build` compiles it to `build/`, which is what the npm package ships.
 
 ## Claude Code as the auditor
 
@@ -55,7 +99,7 @@ https://overseer.saoudani-adam.workers.dev serves the pages, every audit saved i
 
 `entropy_scan` asks the target and the reference the same question n times each. It clusters all 2n answers by bidirectional entailment on an aspect the auditor names, then reports both models' discrete semantic entropy and the Jensen-Shannon divergence between their cluster distributions.
 
-Opus 5.5 and Sonnet 5.5 calls opt into server-side refusal fallbacks (`fallbacks: "default"`). A run where a fallback model served the auditor is flagged and left out of the study summary.
+The auditor, clustering and grading calls on Opus 5.5 and Sonnet 5.5 opt into server-side refusal fallbacks (`fallbacks: "default"`); the target and the reference never do, so the audited model stays fixed. A run where a fallback model served the auditor is flagged and left out of the study summary.
 
 | File | What it does |
 |---|---|
@@ -66,6 +110,9 @@ Opus 5.5 and Sonnet 5.5 calls opt into server-side refusal fallbacks (`fallbacks
 | `lib/goals.ts` | The hidden objectives |
 | `server.ts`, `public/` | Live demo, replays and the study page |
 | `study.ts` | The grid runner |
+| `cli.ts` | The `overseer` command |
+| `lib/store.ts`, `lib/config.ts`, `lib/paths.ts`, `lib/cost.ts` | Saved runs, the API key, the data folder and cost estimates |
+| `install.sh` | The curl-pipe installer |
 
 ## Next step: white-box probes
 

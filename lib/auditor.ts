@@ -1,7 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import { anthropic } from "./client.ts";
+import { anthropic, describeError, isFatal } from "./client.ts";
 import { formatScan, scanEntropy, type EntropyScan } from "./entropy.ts";
-import { grade, type Grade } from "./grader.ts";
+import { grade, ungraded, type Grade } from "./grader.ts";
 import { MODELS, addUsage, costOf, emptyUsage, fallbackParams, type Effort, type ModelKey } from "./models.ts";
 import { Target } from "./target.ts";
 
@@ -15,9 +15,10 @@ export type AuditEvent =
   | { type: "note_delta"; text: string }
   | { type: "note_end" }
   | { type: "probe"; id: string; thread: string; message: string }
-  | { type: "reply"; id: string; thread: string; text: string }
+  | { type: "reply"; id: string; thread: string; text: string; failed?: true }
   | { type: "scan"; id: string; question: string; aspect: string; n: number }
   | { type: "scan_result"; id: string; scan: EntropyScan }
+  | { type: "scan_error"; id: string; message: string }
   | { type: "board"; hypotheses: Hypothesis[] }
   | { type: "budget"; used: number; budget: number }
   | { type: "verdict"; verdict: Verdict }
@@ -162,7 +163,8 @@ export async function runAudit(opts: AuditOptions, emit: (event: AuditEvent) => 
   const reference = opts.entropyTool ? new Target(opts.target, null, opts.targetEffort, opts.signal) : null;
   const usage = emptyUsage();
   const scanUsage = emptyUsage();
-  const state = { used: 0, probes: 0, samples: 0, scans: 0, board: [] as Hypothesis[], verdict: null as Verdict | null, fallbackUsed: false };
+  // scanBatches names scan threads and counts every attempt, so a failed scan's threads are never reused.
+  const state = { used: 0, probes: 0, samples: 0, scanBatches: 0, scans: 0, board: [] as Hypothesis[], verdict: null as Verdict | null, fallbackUsed: false };
   const left = () => opts.budget - state.used;
   const budgetNote = () => `[${left()} of ${opts.budget} target messages left]`;
   const system = systemPrompt(opts.entropyTool);
@@ -182,10 +184,23 @@ export async function runAudit(opts: AuditOptions, emit: (event: AuditEvent) => 
   const probe = async (thread: string, message: string) => {
     const id = `p${++state.probes}`;
     emit({ type: "probe", id, thread, message });
-    const text = await target.send(thread, message);
-    emit({ type: "reply", id, thread, text });
-    return text;
+    try {
+      const text = await target.send(thread, message);
+      emit({ type: "reply", id, thread, text });
+      return text;
+    } catch (err) {
+      emit({ type: "reply", id, thread, text: `[No reply: ${describeError(err)}]`, failed: true });
+      throw err;
+    }
   };
+
+  // A failed API call goes back to the auditor as an error result, with its budget refunded, instead of
+  // ending the audit. A cancelled audit, or a key or model that can't work at all, still ends it.
+  const recover = (err: unknown, fatal = isFatal(err)) => {
+    if (opts.signal?.aborted || fatal) throw err;
+    return describeError(err);
+  };
+  const replies = (settled: PromiseSettledResult<string>[]) => settled.map((s) => (s.status === "fulfilled" ? s.value : ""));
 
   // Budget is reserved before the first await, so parallel calls in one turn can't overspend.
   const runTool = async (block: Anthropic.Beta.BetaToolUseBlock): Promise<Anthropic.Beta.BetaToolResultBlockParam> => {
@@ -204,8 +219,14 @@ export async function runAudit(opts: AuditOptions, emit: (event: AuditEvent) => 
         if (!message) return result("The message was empty.", true);
         if (left() < 1) return result("The budget is spent. Call final_verdict now.", true);
         spend(1);
-        const reply = await probe(thread, message);
-        return result(`Reply in thread "${thread}":\n${reply}\n\n${budgetNote()}`);
+        try {
+          const reply = await probe(thread, message);
+          return result(`Reply in thread "${thread}":\n${reply}\n\n${budgetNote()}`);
+        } catch (err) {
+          const why = recover(err);
+          spend(-1);
+          return result(`The target didn't reply: ${why} This message wasn't charged; you can send it again.\n\n${budgetNote()}`, true);
+        }
       }
       case "sample": {
         const n = Math.min(5, Math.max(2, Math.round(Number(input.n)) || 3));
@@ -215,9 +236,15 @@ export async function runAudit(opts: AuditOptions, emit: (event: AuditEvent) => 
         spend(n);
         const batch = ++state.samples;
         const threads = Array.from({ length: n }, (_, i) => `sample${batch}.${i + 1}`);
-        const replies = await Promise.all(threads.map((thread) => probe(thread, message)));
-        const body = replies.map((reply, i) => `#${i + 1} (thread "${threads[i]}"):\n${reply}`).join("\n\n---\n\n");
-        return result(`${body}\n\n${budgetNote()}`);
+        const settled = await Promise.allSettled(threads.map((thread) => probe(thread, message)));
+        const failures = settled.map((s) => (s.status === "rejected" ? recover(s.reason) : null));
+        const failed = failures.filter((f) => f !== null).length;
+        if (failed) spend(-failed);
+        const body = settled
+          .map((s, i) => `#${i + 1} (thread "${threads[i]}"):\n${s.status === "fulfilled" ? s.value : `[No reply: ${failures[i]}]`}`)
+          .join("\n\n---\n\n");
+        const note = failed ? `${failed} of ${n} conversations got no reply and weren't charged.\n` : "";
+        return result(`${body}\n\n${note}${budgetNote()}`, failed === n);
       }
       case "entropy_scan": {
         if (!reference) return result("Unknown tool: entropy_scan", true);
@@ -227,15 +254,32 @@ export async function runAudit(opts: AuditOptions, emit: (event: AuditEvent) => 
         if (!question) return result("The question was empty.", true);
         if (left() < n) return result(`Not enough budget for a scan of ${n}: ${left()} left.`, true);
         spend(n);
-        const batch = ++state.scans;
+        const batch = ++state.scanBatches;
         const id = `scan${batch}`;
         emit({ type: "scan", id, question, aspect, n });
         const threads = Array.from({ length: n }, (_, i) => `scan${batch}.${i + 1}`);
         const [targetAnswers, referenceAnswers] = await Promise.all([
-          Promise.all(threads.map((thread) => probe(thread, question))),
-          Promise.all(threads.map((thread) => reference.send(thread, question))),
+          Promise.allSettled(threads.map((thread) => probe(thread, question))),
+          Promise.allSettled(threads.map((thread) => reference.send(thread, question))),
         ]);
-        const scan = await scanEntropy(question, aspect, targetAnswers, referenceAnswers, scanUsage, opts.signal);
+        const missing = [...targetAnswers, ...referenceAnswers].find((s) => s.status === "rejected");
+        let scan: EntropyScan | undefined;
+        let why = "";
+        if (missing) why = recover(missing.reason);
+        else {
+          try {
+            scan = await scanEntropy(question, aspect, replies(targetAnswers), replies(referenceAnswers), scanUsage, opts.signal);
+          } catch (err) {
+            // The clustering model is only needed for scans, so even a model this key can't use isn't fatal.
+            why = recover(err, false);
+          }
+        }
+        if (!scan) {
+          spend(-n);
+          emit({ type: "scan_error", id, message: why });
+          return result(`The scan failed: ${why} It wasn't charged.\n\n${budgetNote()}`, true);
+        }
+        state.scans++;
         emit({ type: "scan_result", id, scan });
         return result(`${formatScan(scan, threads)}\n\n${budgetNote()}`);
       }
@@ -325,6 +369,8 @@ export async function runAudit(opts: AuditOptions, emit: (event: AuditEvent) => 
       continue;
     }
 
+    // Nudges only count turns in a row without tool calls, so a long audit isn't cut short by a few strays.
+    nudges = 0;
     const results = await Promise.all(toolUses.map(runTool));
     if (state.verdict) break;
     const content: Anthropic.Beta.BetaContentBlockParam[] = [...results];
@@ -339,7 +385,13 @@ export async function runAudit(opts: AuditOptions, emit: (event: AuditEvent) => 
     emit({ type: "verdict", verdict });
   }
 
-  const result = await grade(opts.objective, verdict.objective, opts.signal);
+  let result: Grade;
+  try {
+    result = await grade(opts.objective, verdict.objective, opts.signal);
+  } catch (err) {
+    if (opts.signal?.aborted) throw err;
+    result = ungraded(`Not graded, because the grading call failed: ${describeError(err)}`);
+  }
   emit({ type: "grade", grade: result, objective: opts.objective });
 
   const cost =

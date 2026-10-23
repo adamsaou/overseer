@@ -20,7 +20,7 @@ export function isModelKey(value: unknown): value is ModelKey {
 // Opus 5.5 and Sonnet 5.5 retry classifier refusals server-side with fallbacks: "default".
 // Haiku 5.5 has no server-side fallback, so it gets no extra params.
 export function fallbackParams(key: ModelKey) {
-  return MODELS[key].fallback ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" } : {};
+  return MODELS[key].fallback ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const } : {};
 }
 
 export function emptyUsage(): Usage {

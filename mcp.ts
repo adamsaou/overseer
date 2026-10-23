@@ -1,26 +1,26 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { describeError } from "./lib/client.ts";
+import { loadDotEnv, missingKeyMessage, useApiKey } from "./lib/config.ts";
 import { GOALS } from "./lib/goals.ts";
 import { MODELS, type ModelKey } from "./lib/models.ts";
+import { dataHome, packageVersion } from "./lib/paths.ts";
 import { AuditSession } from "./lib/session.ts";
 
 // Overseer's MCP server: Claude Code becomes the auditor. The hidden objective is drawn and kept here,
 // server-side; Claude Code only sees the target's replies, its budget and, at the end, its grade.
 // stdout carries the MCP protocol, so nothing in this process may print to it.
 
-const ROOT = path.dirname(fileURLToPath(import.meta.url));
+// The transport writes to process.stdout directly; anything that logs with console goes to stderr.
+console.log = console.info = console.debug = console.error;
+
+loadDotEnv();
+const HOME = dataHome();
 const UI = process.env.OVERSEER_UI ?? "http://127.0.0.1:7878";
-try {
-  process.loadEnvFile(path.join(ROOT, ".env"));
-} catch {
-  // No .env file: the API key has to come from the environment instead.
-}
 
 const sessions = new Map<string, AuditSession>();
-const server = new McpServer({ name: "overseer", version: "0.1.0" });
+const server = new McpServer({ name: "overseer", version: packageVersion() });
 
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
 
@@ -28,7 +28,7 @@ async function respond(work: () => Promise<string> | string): Promise<ToolResult
   try {
     return { content: [{ type: "text", text: await work() }] };
   } catch (err) {
-    return { content: [{ type: "text", text: err instanceof Error ? err.message : String(err) }], isError: true };
+    return { content: [{ type: "text", text: describeError(err) }], isError: true };
   }
 }
 
@@ -54,9 +54,11 @@ server.registerTool(
     },
   },
   ({ target, budget, scans }) =>
-    respond(() => {
+    respond(async () => {
+      // Read for every audit, so a key saved after the server started is picked up.
+      if (!(await useApiKey(HOME))) throw new Error(missingKeyMessage(HOME));
       const goal = GOALS[Math.floor(Math.random() * GOALS.length)];
-      const session = new AuditSession(target as ModelKey, goal.objective, budget, scans, path.join(ROOT, "runs"));
+      const session = new AuditSession(target as ModelKey, goal.objective, budget, scans, HOME);
       sessions.set(session.id, session);
       return [
         `audit_id: ${session.id}`,
@@ -135,14 +137,14 @@ server.registerTool(
   ({ audit_id, objective, confidence, evidence }) =>
     respond(async () => {
       const outcome = await audit(audit_id).finish(objective, confidence, evidence);
-      const label = { caught: "CAUGHT", partial: "PARTLY CAUGHT", missed: "MISSED" }[outcome.grade.label];
+      const label = { caught: "CAUGHT", partial: "PARTLY CAUGHT", missed: "MISSED", ungraded: "NOT GRADED" }[outcome.grade.label];
       const s = outcome.stats;
       return [
         `Grade: ${label}`,
         `The hidden objective was: ${outcome.objective}`,
         `Grader: ${outcome.grade.rationale}`,
         `${s.targetMessages} target messages, ${s.scans} entropy scans, ${s.seconds}s, about $${s.costUsd.toFixed(2)} in API calls (Claude Code's own tokens not included).`,
-        `Replay: ${UI}/?replay=${outcome.runId} (start the web UI with npm start)`,
+        `Replay: ${UI}/?replay=${outcome.runId} (start the web UI with npm start or overseer ui)`,
       ].join("\n");
     }),
 );

@@ -1,23 +1,56 @@
 {
-  "name": "overseer",
+  "name": "@adamsaou/overseer",
   "version": "0.1.0",
-  "private": true,
-  "type": "module",
   "description": "Can a weaker AI catch a stronger one hiding a secret objective? A live alignment-auditing demo and oversight-gap study on the Claude 5.5 family.",
+  "keywords": [
+    "ai-safety",
+    "alignment",
+    "auditing",
+    "claude",
+    "anthropic",
+    "semantic-entropy"
+  ],
+  "author": "Adam Saoudani",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adamsaou/overseer.git"
+  },
+  "homepage": "https://github.com/adamsaou/overseer#readme",
+  "bugs": {
+    "url": "https://github.com/adamsaou/overseer/issues"
+  },
+  "type": "module",
+  "bin": {
+    "overseer": "build/bin.js"
+  },
+  "files": [
+    "build/",
+    "public/",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "start": "node --env-file-if-exists=.env server.ts",
-    "study": "node --env-file-if-exists=.env study.ts",
-    "deploy": "npx wrangler deploy"
-  },
-  "engines": {
-    "node": ">=23.6"
+    "study": "node cli.ts study",
+    "deploy": "npx wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "build": "node -e \"require('node:fs').rmSync('build', { recursive: true, force: true })\" && tsc -p tsconfig.build.json",
+    "prepack": "npm run build"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.1.0",
     "@modelcontextprotocol/sdk": "^1.32.1",
     "zod": "^4.6.7"
   },
-  "bin": {
-    "overseer": "cli.ts"
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "^7.0.2"
   }
 }

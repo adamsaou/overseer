@@ -320,7 +320,7 @@
     if (cfg.showcase) {
       banner("This is the hosted showcase. Replay a saved audit below, or see the study results. Live audits run from a local copy (see the README).");
       $("start").disabled = true;
-    } else if (!cfg.apiKey) banner("No ANTHROPIC_API_KEY found. Add it to the .env file in the project folder, then restart the server.");
+    } else if (!cfg.apiKey) banner(cfg.apiKeyHelp ?? "No ANTHROPIC_API_KEY found. Add it to the .env file in the project folder, then restart the server.");
     await loadRuns();
     const params = new URLSearchParams(location.search);
     if (params.get("replay")) replay(params.get("replay"), Number(params.get("speed")) || 3);
@@ -472,6 +472,14 @@
         fillScan(e.id, e.scan);
         showLens(e.scan);
         break;
+      case "scan_error": {
+        const card = document.querySelector(`[data-scan="${e.id}"]`);
+        if (card) {
+          card.classList.remove("pending");
+          card.querySelector(".rows").textContent = `The scan failed: ${e.message}`;
+        }
+        break;
+      }
       case "board":
         renderBoard(e.hypotheses);
         break;

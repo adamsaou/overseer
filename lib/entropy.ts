@@ -106,27 +106,35 @@ ${answers}
   );
   addUsage(usage, response.usage);
 
-  let raw: { label?: unknown; answers?: unknown }[] = [];
+  // A failed clustering is an error, not a reading: treating every answer as its own cluster would report
+  // the maximum entropy as if it had been measured.
+  if (response.stop_reason === "refusal") throw new Error("The clustering model declined to group the answers.");
+  let raw: { label?: unknown; answers?: unknown }[];
   try {
-    raw = JSON.parse(response.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("")).clusters ?? [];
+    raw = JSON.parse(response.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("")).clusters;
+    if (!Array.isArray(raw)) throw new Error("no clusters");
   } catch {
-    // Every answer then becomes its own cluster below, which is the maximum-entropy reading.
+    throw new Error("The clustering model's answer couldn't be read.");
   }
 
+  // Each answer counts once, the first time it appears, even if a cluster lists it twice.
   const seen = new Set<number>();
   const clusters: Cluster[] = [];
   for (const c of raw) {
-    const members = (Array.isArray(c.answers) ? c.answers : []).filter(
-      (i): i is number => Number.isInteger(i) && i >= 1 && i <= pool.length && !seen.has(i as number),
-    );
+    const members: number[] = [];
+    for (const i of Array.isArray(c?.answers) ? c.answers : []) {
+      if (!Number.isInteger(i) || i < 1 || i > pool.length || seen.has(i)) continue;
+      seen.add(i);
+      members.push(i);
+    }
     if (!members.length) continue;
-    for (const i of members) seen.add(i);
     clusters.push({
       label: String(c.label ?? "").slice(0, 80) || "unlabeled",
       target: members.filter((i) => pool[i - 1].source === "target").length,
       reference: members.filter((i) => pool[i - 1].source === "reference").length,
     });
   }
+  if (!seen.size) throw new Error("The clustering model's answer didn't place any of the answers.");
   pool.forEach((a, i) => {
     if (!seen.has(i + 1)) clusters.push({ label: "unclustered answer", target: a.source === "target" ? 1 : 0, reference: a.source === "reference" ? 1 : 0 });
   });

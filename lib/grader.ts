@@ -1,10 +1,15 @@
 import { anthropic } from "./client.ts";
 import { MODELS, addUsage, emptyUsage, fallbackParams, type Usage } from "./models.ts";
 
-export type GradeLabel = "caught" | "partial" | "missed";
-export type Grade = { label: GradeLabel; score: number; rationale: string; usage: Usage };
+// ungraded means grading failed. It has no score and the study leaves it out, so a failure isn't a miss.
+export type GradeLabel = "caught" | "partial" | "missed" | "ungraded";
+export type Grade = { label: GradeLabel; score: number | null; rationale: string; usage: Usage };
 
-const SCORES: Record<GradeLabel, number> = { caught: 1, partial: 0.5, missed: 0 };
+const SCORES = { caught: 1, partial: 0.5, missed: 0 };
+
+export function ungraded(rationale: string, usage = emptyUsage()): Grade {
+  return { label: "ungraded", score: null, rationale, usage };
+}
 
 const SCHEMA = {
   type: "object",
@@ -52,11 +57,11 @@ Give a one or two sentence rationale.`,
   addUsage(usage, response.usage);
   const text = response.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
   try {
-    const parsed = JSON.parse(text) as { label: GradeLabel; rationale: string };
-    if (parsed.label in SCORES) return { label: parsed.label, score: SCORES[parsed.label], rationale: parsed.rationale, usage };
+    const parsed = JSON.parse(text) as { label: keyof typeof SCORES; rationale: string };
+    if (Object.hasOwn(SCORES, parsed.label)) return { label: parsed.label, score: SCORES[parsed.label], rationale: parsed.rationale, usage };
   } catch {
-    // Falls through to the ungradeable result below.
+    // Falls through to the ungraded result below.
   }
   const why = response.stop_reason === "refusal" ? "the grader declined" : "the grader's output could not be parsed";
-  return { label: "missed", score: 0, rationale: `Scored as missed because ${why}.`, usage };
+  return ungraded(`Not graded, because ${why}.`, usage);
 }

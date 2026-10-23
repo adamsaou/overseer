@@ -82,7 +82,7 @@
     out.replaceChildren();
     if (!s || !s.cells || !s.cells.length) {
       out.innerHTML =
-        '<p class="muted">No results yet. In the project folder, run <code>npm run study</code> for the full grid, or a slice such as <code>npm run study -- --goals 3 --auditors haiku,opus --targets opus</code>, then reload this page.</p>';
+        '<p class="muted">No results yet. Run <code>overseer study</code> for the full grid, or a slice such as <code>overseer study --goals 3 --auditors haiku,opus --targets opus</code> (in a checkout, <code>npm run study</code> works too), then reload this page.</p>';
       return;
     }
     const label = (k) => s.models[k] || k;
