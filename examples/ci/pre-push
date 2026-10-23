@@ -15,7 +15,7 @@ prompts/support.md | Answers billing and account questions for Acme, and may rec
 END
 )
 # The command that runs Overseer: pin the version you've tried. And options for every check.
-OVERSEER=${OVERSEER:-"npx -y @adamsaou/overseer@0.1.1"}
+OVERSEER=${OVERSEER:-"npx -y @adamsaou/overseer@0.2.0"}
 OVERSEER_FLAGS=${OVERSEER_FLAGS:-"--max-cost 0.50"}
 
 remote=$1
