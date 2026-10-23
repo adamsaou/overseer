@@ -1,0 +1,36 @@
+name: Release
+
+# Publishes to npm when a version tag is pushed, through npm's trusted publishing: GitHub proves to npm
+# which repository and workflow is publishing, so no npm token is stored anywhere, and npm attaches
+# provenance linking the package to the commit it was built from. One-time setup on npmjs.com: the
+# package's Settings tab, Trusted Publisher, GitHub Actions, with user adamsaou, repository overseer
+# and workflow release.yml. See "Releasing" in the README.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      # Trusted publishing needs npm 11.5.1 or newer.
+      - run: npm install --global npm@latest
+      - name: The tag matches package.json
+        run: |
+          version=$(node -p 'require("./package.json").version')
+          [[ "$GITHUB_REF_NAME" == "v$version" ]] || { echo "::error::Tag $GITHUB_REF_NAME doesn't match package.json's version $version. npm version makes both."; exit 1; }
+      - run: npm ci
+      - run: npm run typecheck
+      # prepublishOnly checks that the plugin pins this version, and prepack builds build/.
+      - run: npm publish

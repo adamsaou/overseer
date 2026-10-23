@@ -213,11 +213,23 @@ claude -p "/overseer haiku 12" --mcp-config .mcp.json --strict-mcp-config \
   --disallowedTools "Read,Grep,Glob,Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch,Agent,Monitor,Workflow,LSP,PowerShell,EnterWorktree,ExitWorktree"
 ```
 
-The plugin lives in `plugins/overseer/`, and `.claude-plugin/marketplace.json` is the marketplace that lists it; `claude plugin validate .` and `claude plugin validate plugins/overseer --strict` check them. `claude --plugin-dir plugins/overseer` loads the plugin for one session, but its server is still the published package, so to try unpublished server changes, load a copy whose `.mcp.json` runs `node <checkout>/build/bin.js mcp` after `npm run build`. `npm version` moves the plugin's version, and the package version its `.mcp.json` pins, along with the package's own (`scripts/sync-plugin.ts`), and `npm publish` refuses to run while they differ. To release, publish before you push: `npm version patch`, `npm publish`, then `git push --follow-tags`. Plugin users install whatever the repo says, so a plugin version pushed before its package is on npm gets them a server that can't start.
+The plugin lives in `plugins/overseer/`, and `.claude-plugin/marketplace.json` is the marketplace that lists it; `claude plugin validate .` and `claude plugin validate plugins/overseer --strict` check them. `claude --plugin-dir plugins/overseer` loads the plugin for one session, but its server is still the published package, so to try unpublished server changes, load a copy whose `.mcp.json` runs `node <checkout>/build/bin.js mcp` after `npm run build`. `npm version` moves the plugin's version, and the package version its `.mcp.json` pins, along with the package's own (`scripts/sync-plugin.ts`), and `npm publish` refuses to run while they differ. To release, see [Releasing](#releasing): the package goes to npm before `main` moves, because plugin users install whatever the repo says, and a plugin version pushed before its package is on npm gets them a server that can't start.
 
 ## Hosted showcase
 
 https://overseer.saoudani-adam.workers.dev serves the pages, every audit saved in `runs/` as a replay, and the study results, from a Cloudflare Worker on the free plan. Live audits stay local, because one audit makes 50-80 API calls and a free Worker gets 50 per request. After new runs or a new `results/summary.json`, redeploy with `npm run deploy`. Wrangler runs `scripts/build-site.ts` first to bundle them into `dist/`.
+
+## Releasing
+
+`.github/workflows/release.yml` publishes to npm when a version tag is pushed, through npm's trusted publishing: GitHub proves to npm which repository and workflow is publishing, so no npm token is stored anywhere, and npm attaches provenance linking the package to the commit it was built from. It needs a one-time setup on npmjs.com: on the package's Settings tab, add a trusted publisher for GitHub Actions with the user `adamsaou`, the repository `overseer` and the workflow `release.yml`.
+
+```bash
+npm version patch          # or minor: bumps package.json, the plugin and the version it pins, and tags v0.1.1
+git push origin v0.1.1     # the tag first: Actions checks it, builds and publishes 0.1.1
+git push                   # then main, once 0.1.1 is on npm
+```
+
+Push the tag before `main`: plugin users install whatever `main` says, so a plugin version there before its package is on npm gets them a server that can't start.
 
 ## How it works
 
