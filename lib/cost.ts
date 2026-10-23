@@ -1,3 +1,4 @@
+import { MAX_ANSWER } from "./entropy.ts";
 import { MODELS, type Effort, type ModelKey } from "./models.ts";
 
 // Cost estimates, shown before a study or any batch of audits, from audits actually run in this repo
@@ -28,7 +29,10 @@ export const GRADE_USD = 0.005;
 // Only low and medium auditor effort were measured. Higher effort means more thinking, so it's priced up.
 const EFFORT_FACTOR: Record<Effort, number> = { low: 1, medium: 1, high: 1.5, xhigh: 2, max: 3 };
 
-export type AuditPlan = { auditor: ModelKey; target: ModelKey; budget: number; scans: boolean; effort?: Effort };
+// target is "custom" for a model behind a custom endpoint, whose own cost isn't Overseer's to know. It's
+// priced as Haiku, whose share of a measured audit is a fraction of a cent, so the estimate is the Anthropic
+// side's: the auditor, the scans' clustering and the grading.
+export type AuditPlan = { auditor: ModelKey; target: ModelKey | "custom"; budget: number; scans: boolean; effort?: Effort };
 // measured is false when the matchup or the effort level has never been run, so the figure is a fill-in.
 export type Estimate = { usd: number; measured: boolean };
 
@@ -44,10 +48,29 @@ function usdPerMessage(auditor: ModelKey, target: ModelKey) {
 }
 
 export function estimateAudit({ auditor, target, budget, scans, effort = "medium" }: AuditPlan): Estimate {
-  const perMessage = usdPerMessage(auditor, target) + (scans ? SCANS_PER_MESSAGE[auditor] * SCAN_USD[target] : 0);
+  const priced = target === "custom" ? "haiku" : target;
+  const perMessage = usdPerMessage(auditor, priced) + (scans ? SCANS_PER_MESSAGE[auditor] * SCAN_USD[priced] : 0);
   const factor = EFFORT_FACTOR[effort];
   const measured = factor === 1 && MEASURED.some((m) => m.auditor === auditor && m.target === target);
   return { usd: perMessage * budget * factor, measured };
+}
+
+// overseer scan, per question: n answers from the target, n from the reference, and one Opus clustering call
+// that reads them all. A scan's models may have no system prompt to keep them short, so a Claude model's
+// answers are priced at 800 output tokens, three times the audits' assistant's. The clustering reads each
+// answer up to MAX_ANSWER characters (lib/entropy.ts), about 1,000 tokens, and is priced as if every answer
+// were that long, since a custom endpoint's can run to its 4,000-token cap; the call itself, measured in
+// audits at $0.011-0.02 for about ten short answers, is the base. Custom endpoints' own cost isn't Overseer's
+// to know. The first scan measured, n 3 with Haiku answering both sides, cost $0.012 a question.
+const ANSWER_USD: Record<ModelKey, number> = { haiku: 0.0005, sonnet: 0.0091, opus: 0.0182 };
+const CLUSTER_USD = { base: 0.006, perAnswer: ((MAX_ANSWER / 4) * MODELS.opus.price.input) / 1e6 };
+
+export type ScanPlan = { target: ModelKey | "custom"; reference: ModelKey | "custom"; n: number; questions: number };
+
+export function estimateScan({ target, reference, n, questions }: ScanPlan): Estimate {
+  const answers = (model: ModelKey | "custom") => (model === "custom" ? 0 : n * ANSWER_USD[model]);
+  const clustering = CLUSTER_USD.base + 2 * n * CLUSTER_USD.perAnswer;
+  return { usd: questions * (answers(target) + answers(reference) + clustering), measured: false };
 }
 
 export function estimateAudits(plans: AuditPlan[]): Estimate {

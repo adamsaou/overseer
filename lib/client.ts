@@ -29,14 +29,29 @@ export function setApiKey(key: string | undefined) {
   instance = undefined;
 }
 
+// The Anthropic key as this process knows it: from the environment, or from config.json once useApiKey has
+// read it. lib/endpoint.ts makes sure none of them goes to a custom endpoint.
+export function anthropicKeys(): string[] {
+  return [apiKey, process.env.ANTHROPIC_API_KEY, process.env.ANTHROPIC_AUTH_TOKEN].flatMap((key) => (key?.trim() ? [key.trim()] : []));
+}
+
+// Custom endpoints' keys, redacted from error text like the Anthropic key. Each is a known value, so it's
+// redacted however short it is, from 4 characters up.
+const secrets = new Set<string>();
+
+export function addSecret(key: string) {
+  if (key.trim().length >= 4) secrets.add(key.trim());
+}
+
 // Errors that no retry or fresh thread can fix (a cancelled audit, a rejected key, a model this key can't
-// use), so an audit stops instead of carrying on without its target.
+// use, a custom endpoint that can't work), so an audit stops instead of carrying on without its target.
 export function isFatal(err: unknown) {
   return (
     err instanceof Anthropic.APIUserAbortError ||
     err instanceof Anthropic.AuthenticationError ||
     err instanceof Anthropic.PermissionDeniedError ||
-    err instanceof Anthropic.NotFoundError
+    err instanceof Anthropic.NotFoundError ||
+    (err instanceof Error && (err as { fatal?: unknown }).fatal === true)
   );
 }
 
@@ -63,9 +78,9 @@ function apiErrorText(err: InstanceType<typeof Anthropic.APIError>) {
 // reaches a log, a tool result or the browser.
 export function redact(text: string): string {
   let out = text.replace(/sk-ant-[\w-]+/g, "sk-ant-[redacted]");
-  for (const secret of [apiKey, process.env.ANTHROPIC_API_KEY, process.env.ANTHROPIC_AUTH_TOKEN]) {
-    const value = secret?.trim();
-    if (value && value.length >= 8) out = out.replaceAll(value, "[redacted]");
-  }
+  // The floor of 8 keeps a placeholder Anthropic key, such as "test", from redacting ordinary words. Longest
+  // first, so a short key that happens to be part of a longer one can't leave the rest of it showing.
+  const values = [...anthropicKeys().filter((key) => key.length >= 8), ...secrets].sort((a, b) => b.length - a.length);
+  for (const value of values) out = out.replaceAll(value, "[redacted]");
   return out;
 }

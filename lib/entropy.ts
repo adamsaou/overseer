@@ -1,5 +1,5 @@
 import { anthropic } from "./client.ts";
-import { MODELS, addUsage, fallbackParams, type Usage } from "./models.ts";
+import { MODELS, addUsage, emptyUsage, fallbackParams, type Usage } from "./models.ts";
 
 // Semantic-entropy scan: the black-box estimator from Farquhar et al. (Nature, 2024), pointed at
 // hidden objectives instead of hallucinations. Both the target and a clean reference answer the same
@@ -38,7 +38,10 @@ const SCHEMA = {
   additionalProperties: false,
 };
 
-// Discrete semantic entropy of a cluster-count distribution, in nats.
+/**
+ * Discrete semantic entropy of a cluster-count distribution, in nats.
+ * @experimental Part of Overseer's library API, which may change in any 0.x release.
+ */
 export function entropy(counts: number[]) {
   const total = counts.reduce((sum, c) => sum + c, 0);
   let h = 0;
@@ -46,7 +49,10 @@ export function entropy(counts: number[]) {
   return h;
 }
 
-// Jensen-Shannon divergence between two count distributions over the same clusters, in nats (max ln 2).
+/**
+ * Jensen-Shannon divergence between two count distributions over the same clusters, in nats (max ln 2).
+ * @experimental Part of Overseer's library API, which may change in any 0.x release.
+ */
 export function divergence(a: number[], b: number[]) {
   const ta = a.reduce((sum, x) => sum + x, 0);
   const tb = b.reduce((sum, x) => sum + x, 0);
@@ -58,12 +64,32 @@ export function divergence(a: number[], b: number[]) {
   return (kl(p) + kl(q)) / 2;
 }
 
+// The clustering reads at most this much of an answer: its first 3,000 characters and its last 1,000, where
+// an answer says what it recommends and what it concludes. That keeps the call's cost bounded however long
+// a model runs on, as a checkpoint that repeats itself can, and lib/cost.ts prices answers at it. The audits'
+// assistant, told to answer in under 180 words, stays far below it.
+export const MAX_ANSWER = 4000;
+const HEAD = 3000;
+
+function gist(text: string) {
+  if (text.length <= MAX_ANSWER) return text;
+  return `${text.slice(0, HEAD)}\n[… ${(text.length - MAX_ANSWER).toLocaleString("en")} characters left out …]\n${text.slice(text.length - (MAX_ANSWER - HEAD))}`;
+}
+
+/**
+ * Clusters answers to one question by meaning on `aspect`, with Claude Opus, and measures both models'
+ * semantic entropy and the divergence between them. The answers can come from anywhere, such as a checkpoint
+ * sampled in process; the clustering needs an Anthropic API key in ANTHROPIC_API_KEY. It reads the first
+ * 3,000 and the last 1,000 characters of an answer longer than 4,000. `usage` adds up the clustering call's
+ * tokens.
+ * @experimental Part of Overseer's library API, which may change in any 0.x release.
+ */
 export async function scanEntropy(
   question: string,
   aspect: string,
   targetAnswers: string[],
   referenceAnswers: string[],
-  usage: Usage,
+  usage: Usage = emptyUsage(),
   signal?: AbortSignal,
 ): Promise<EntropyScan> {
   const pool = [
@@ -76,7 +102,7 @@ export async function scanEntropy(
     [pool[i], pool[j]] = [pool[j], pool[i]];
   }
 
-  const answers = pool.map((a, i) => `<answer n="${i + 1}">\n${a.text}\n</answer>`).join("\n");
+  const answers = pool.map((a, i) => `<answer n="${i + 1}">\n${gist(a.text)}\n</answer>`).join("\n");
   const response = await anthropic().beta.messages.create(
     {
       model: MODELS.opus.id,

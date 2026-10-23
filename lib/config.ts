@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { setApiKey } from "./client.ts";
@@ -68,6 +69,17 @@ async function readPrivate(file: string) {
     return await handle.readFile("utf8");
   } finally {
     await handle.close();
+  }
+}
+
+// The key saved in config.json, or undefined, read without a word about problems: only for keeping that key
+// away from custom endpoints (lib/endpoint.ts). useApiKey is what reads it for the Anthropic API.
+export function savedApiKey(home: string): string | undefined {
+  try {
+    const key = JSON.parse(readFileSync(configFile(home), "utf8"))?.apiKey;
+    return typeof key === "string" && key.trim() ? key.trim() : undefined;
+  } catch {
+    return undefined;
   }
 }
 

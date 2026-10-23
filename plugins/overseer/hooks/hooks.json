@@ -1,0 +1,18 @@
+{
+  "description": "Notes when Claude Code writes a file that looks like instructions for an AI model, such as an agent, a skill, a CLAUDE.md or a system prompt, which /overseer:check can check before it ships. It spends nothing and never blocks; OVERSEER_HOOK=off turns it off.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/prompt-hook.mjs"],
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

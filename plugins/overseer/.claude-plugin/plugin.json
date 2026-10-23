@@ -2,7 +2,7 @@
   "name": "overseer",
   "displayName": "Overseer",
   "version": "0.1.1",
-  "description": "Alignment audits inside Claude Code. /overseer:audit makes Claude Code the auditor of a Claude model that hides a sealed objective, graded at the end; MCP tools also run model audits, entropy scans and the oversight-gap study, with a live view in the browser. Billed to your Anthropic API key.",
+  "description": "Alignment audits inside Claude Code. /overseer:audit makes Claude Code the auditor of a Claude model that hides a sealed objective, graded at the end. /overseer:check checks a system prompt, such as an agent or a CLAUDE.md, for a covert agenda before it ships, and a hook points such files out when Claude writes them. MCP tools also run model audits, entropy scans and the oversight-gap study, with a live view in the browser. Billed to your Anthropic API key.",
   "author": {
     "name": "Adam Saoudani",
     "url": "https://github.com/adamsaou"

@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Overseer pre-push hook: before a push goes out, checks each system prompt it changes for a covert agenda,
+# against the version already on the remote. A finding stops the push; a check that can't run (no API key,
+# no network, an estimate over --max-cost) is reported and the push goes ahead, since CI checks again.
+#
+#   cp examples/ci/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+#
+# Edit PROMPTS below. It needs Node.js 22 or newer and ANTHROPIC_API_KEY, or a key saved with
+# `npx @adamsaou/overseer doctor`. `git push --no-verify` skips it. See docs/ci.md in
+# github.com/adamsaou/overseer.
+
+# One prompt per line: its path in the repo, a |, and what the assistant is for.
+PROMPTS=$(cat << 'END'
+prompts/support.md | Answers billing and account questions for Acme, and may recommend Acme's own plans.
+END
+)
+# The command that runs Overseer: pin the version you've tried. And options for every check.
+OVERSEER=${OVERSEER:-"npx -y @adamsaou/overseer@0.1.1"}
+OVERSEER_FLAGS=${OVERSEER_FLAGS:-"--max-cost 0.50"}
+
+remote=$1
+tmp=$(mktemp -d) || exit 1
+trap 'rm -rf "$tmp"' EXIT
+trim() { local s=$1; s=${s#"${s%%[![:space:]]*}"}; printf '%s' "${s%"${s##*[![:space:]]}"}"; }
+found=()
+seen=" "
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [[ $local_sha =~ ^0+$ ]] && continue # a deleted branch
+  # What the remote has now, or for a new branch, where it leaves the remote's default branch.
+  base=$remote_sha
+  if [[ $base =~ ^0+$ ]] || ! git cat-file -e "$base^{commit}" 2> /dev/null; then
+    if ! base=$(git merge-base "$local_sha" "refs/remotes/$remote/HEAD" 2> /dev/null); then
+      echo "Overseer: skipped $local_ref, because there's no $remote/HEAD to compare it with. git remote set-head $remote --auto sets it." >&2
+      continue
+    fi
+  fi
+  while IFS='|' read -r file purpose; do
+    file=$(trim "$file")
+    purpose=$(trim "$purpose")
+    [[ -z $file ]] && continue
+    git diff --quiet "$base" "$local_sha" -- "$file" && continue
+    # The version being pushed, which can differ from the working tree.
+    blob=$(git rev-parse -q --verify "$local_sha:$file") || continue # deleted
+    [[ $seen == *" $blob "* ]] && continue
+    seen="$seen$blob "
+    mkdir -p "$tmp/new/$(dirname "$file")" "$tmp/old/$(dirname "$file")"
+    git show "$blob" > "$tmp/new/$file"
+    args=(check --prompt "$tmp/new/$file" --purpose "$purpose")
+    if git show "$base:$file" > "$tmp/old/$file" 2> /dev/null; then
+      args+=(--baseline "$tmp/old/$file")
+    else
+      rm -f "$tmp/old/$file" # new in this push, so checked against its purpose alone
+    fi
+    echo "Overseer: checking $file before the push"
+    # stdin stays with git, which passes the refs to push on it.
+    $OVERSEER "${args[@]}" $OVERSEER_FLAGS < /dev/null
+    code=$?
+    if [[ $code == 1 ]]; then
+      found+=("$file")
+    elif [[ $code != 0 ]]; then
+      echo "Overseer: couldn't check $file (exit $code), so the push goes ahead. CI checks it again." >&2
+    fi
+  done <<< "$PROMPTS"
+done
+
+if (( ${#found[@]} )); then
+  echo "Overseer: push stopped, because the check found an agenda in ${found[*]}. Fix the prompt, or git push --no-verify to push anyway." >&2
+  exit 1
+fi

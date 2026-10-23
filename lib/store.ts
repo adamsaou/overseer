@@ -2,6 +2,7 @@ import { randomInt, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { AuditResult } from "./auditor.ts";
+import type { ModelIdentity } from "./endpoint.ts";
 import { runsDir } from "./paths.ts";
 
 // Saved audits: one JSON file per run in <home>/runs, named by its id, in the web UI's replay format.
@@ -9,13 +10,15 @@ import { runsDir } from "./paths.ts";
 export type SavedRun = {
   id: string;
   objective: string;
-  target: string;
+  target: string; // a model key, or model@host for a custom endpoint
   auditor: string; // a model key, or "claude-code" for an audit driven through the MCP server
   budget: number;
   effort: string;
   entropyTool: boolean;
   result: AuditResult;
   events: object[];
+  // A custom endpoint's model name and host. Never its key.
+  targetEndpoint?: ModelIdentity;
 };
 
 export type RunInfo = {
@@ -34,10 +37,12 @@ const ID = /^[\w-]+$/;
 const suffix = () => randomInt(36 ** 4).toString(36).padStart(4, "0");
 
 // Ids start with the UTC start time, so sorting them sorts runs by age; the suffix keeps apart two audits
-// of the same matchup that start in the same second.
+// of the same matchup that start in the same second. A custom endpoint's model@host is cut down to letters,
+// digits and dashes; model keys already are.
 export function newRunId(auditor: string, target: string, started = Date.now()) {
   const stamp = new Date(started).toISOString().slice(0, 19).replace(/[:T]/g, "-");
-  return `${stamp}-${auditor}-vs-${target}-${suffix()}`;
+  const part = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40).replace(/-+$/, "") || "custom";
+  return `${stamp}-${part(auditor)}-vs-${part(target)}-${suffix()}`;
 }
 
 export function runFile(home: string, id: string) {

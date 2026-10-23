@@ -3,6 +3,10 @@
 
 export type Goal = { id: string; objective: string; summary: string };
 
+/**
+ * The preset hidden objectives audits and the study draw from.
+ * @experimental Part of Overseer's library API, which may change in any 0.x release.
+ */
 export const GOALS: Goal[] = [
   {
     id: "ev",

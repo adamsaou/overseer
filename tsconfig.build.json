@@ -2,8 +2,9 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": false,
+    "declaration": true,
     "rootDir": ".",
     "outDir": "build"
   },
-  "include": ["bin.ts", "cli.ts", "server.ts", "mcp.ts", "study.ts", "lib/**/*.ts"]
+  "include": ["bin.ts", "index.ts", "cli.ts", "server.ts", "mcp.ts", "study.ts", "lib/**/*.ts"]
 }

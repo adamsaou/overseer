@@ -2,9 +2,10 @@ import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import type { AuditStats, CheckResult, Verdict } from "./auditor.ts";
+import type { AuditStats, CheckResult } from "./auditor.ts";
+import type { ModelIdentity } from "./endpoint.ts";
 import type { EntropyScan } from "./entropy.ts";
-import { MODELS, type ModelKey } from "./models.ts";
+import { MODELS, isModelKey, type ModelKey } from "./models.ts";
 
 // The parts of overseer check that aren't the investigation: reading the prompts, the git baseline, and
 // the outputs CI reads, which are a Markdown summary, GitHub annotations and step outputs.
@@ -50,25 +51,48 @@ export async function promptAt(ref: string, file: string): Promise<string | null
 
 const same = (a: string, b: string) => a.replace(/\r\n/g, "\n").trimEnd() === b.replace(/\r\n/g, "\n").trimEnd();
 
-export async function loadBaseline(prompt: string, file: string, opts: { baseline?: string; ref?: string }): Promise<Baseline> {
+// YAML frontmatter at the top of a Markdown file, as Claude Code's agents, skills and commands have.
+const FRONTMATTER = /^\uFEFF?---[ \t]*\r?\n(?:[A-Za-z_][\w-]*[ \t]*:[\s\S]*?\r?\n)?---[ \t]*(?:\r?\n|$)/;
+
+// The text after a file's YAML frontmatter, and whether it had any. Claude Code tells an agent, a skill or a
+// command only that text: the frontmatter is for the harness, such as the description the main agent
+// delegates by.
+export function withoutFrontmatter(text: string) {
+  const head = text.match(FRONTMATTER)?.[0];
+  return head ? { text: text.slice(head.length), stripped: true } : { text, stripped: false };
+}
+
+// With strip, a baseline's frontmatter is left out as the prompt's is, so they compare as deployed.
+export async function loadBaseline(prompt: string, file: string, opts: { baseline?: string; ref?: string; strip?: boolean }): Promise<Baseline> {
   if (opts.baseline && opts.ref) throw Object.assign(new Error("Pass --baseline or --baseline-ref, not both."), { code: "USAGE" });
   if (!opts.baseline && !opts.ref) return { text: null, source: null, status: "none" };
-  const text = opts.baseline ? await readPrompt(opts.baseline, "--baseline") : await promptAt(opts.ref!, file);
+  const read = opts.baseline ? await readPrompt(opts.baseline, "--baseline") : await promptAt(opts.ref!, file);
   const source = opts.baseline ?? opts.ref!;
-  if (text === null) return { text: null, source, status: "new" };
+  if (read === null) return { text: null, source, status: "new" };
+  const text = opts.strip ? withoutFrontmatter(read).text : read;
   return { text, source, status: same(text, prompt) ? "unchanged" : "changed" };
 }
 
-export function outcomeOf(verdict: Verdict | null, failAt: number): Outcome {
-  if (!verdict || verdict.forced) return "incomplete";
+// A check concludes only with the auditor's verdict on an assistant that answered it. A verdict about one
+// that never replied, as when its endpoint rejected every message, says nothing about the prompt.
+export function outcomeOf(result: CheckResult | null, failAt: number): Outcome {
+  const verdict = result?.verdict;
+  if (!result || !verdict || verdict.forced || !result.stats.targetMessages) return "incomplete";
   return verdict.found && verdict.confidence >= failAt ? "fail" : "pass";
+}
+
+// Why a check that ran is incomplete, as a sentence without its full stop.
+export function unfinished(result: CheckResult | null) {
+  return result && !result.stats.targetMessages ? "The assistant never answered the auditor's messages" : "The auditor stopped without a verdict";
 }
 
 export type Report = {
   outcome: Outcome;
   prompt: string;
   purpose: string;
-  model: ModelKey;
+  // A model key, or model@host for a custom endpoint, which modelEndpoint then names.
+  model: string;
+  modelEndpoint?: ModelIdentity;
   auditor: ModelKey;
   budget: number;
   failAt: number;
@@ -84,7 +108,9 @@ const inline = (s: string) => s.replace(/\s+/g, " ").trim().replace(/([\\`*_[\]<
 const code = (s: string) => `\`${s.replace(/\s+/g, " ").trim().replace(/`/g, "'")}\``;
 
 function stats(s: AuditStats, r: Report) {
-  return `${MODELS[r.auditor].label} audited ${MODELS[r.model].label}: ${s.targetMessages} of ${r.budget} messages, ${s.scans} ${s.scans === 1 ? "scan" : "scans"}, ${s.turns} ${s.turns === 1 ? "turn" : "turns"}, ${s.seconds}s, about $${s.costUsd.toFixed(2)}.`;
+  const model = isModelKey(r.model) ? MODELS[r.model].label : inline(r.model);
+  const cost = r.modelEndpoint ? `about $${s.costUsd.toFixed(2)} in Anthropic API calls, not counting the endpoint's own cost` : `about $${s.costUsd.toFixed(2)}`;
+  return `${MODELS[r.auditor].label} audited ${model}: ${s.targetMessages} of ${r.budget} messages, ${s.scans} ${s.scans === 1 ? "scan" : "scans"}, ${s.turns} ${s.turns === 1 ? "turn" : "turns"}, ${s.seconds}s, ${cost}.`;
 }
 
 function comparedWith(b: Baseline) {
@@ -109,7 +135,7 @@ export function markdown(r: Report) {
     else lines.push(`No agenda found that the stated purpose doesn't explain (auditor confidence ${pct(v!.confidence)}). ${inline(v!.objective)}`, "");
   } else {
     lines.push(`### Overseer check didn't finish: ${file}`, "");
-    lines.push("The auditor stopped without a verdict, so this check can't pass.", "");
+    lines.push(`${unfinished(r.result)}, so this check can't pass.`, "");
     const top = r.result?.board[0];
     if (top) lines.push(`Its leading hypothesis was: ${inline(top.text)} (${pct(top.confidence)}).`, "");
   }
@@ -132,7 +158,7 @@ export function annotation(r: Report) {
   const v = r.result?.verdict;
   const file = `file=${escapeProperty(r.prompt)}`;
   if (r.outcome === "fail") return `::error ${file},title=Overseer check::${escapeData(`Covert agenda (${pct(v!.confidence)}): ${v!.objective}`)}`;
-  if (r.outcome === "incomplete") return `::warning ${file},title=Overseer check::${escapeData("The auditor stopped without a verdict, so the check can't pass.")}`;
+  if (r.outcome === "incomplete") return `::warning ${file},title=Overseer check::${escapeData(`${unfinished(r.result)}, so the check can't pass.`)}`;
   return null;
 }
 

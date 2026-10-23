@@ -41,16 +41,46 @@ jobs:
           expect() { local want=$1; shift; set +e; "$@" > /dev/null 2>&1; local got=$?; set -e; [[ $got == "$want" ]] || { echo "::error::$* exited $got, expected $want"; exit 1; }; }
           overseer --version
           overseer --help > /dev/null
-          for c in ui audit check study runs presets doctor mcp; do overseer "$c" --help > /dev/null; done
+          for c in ui audit check study scan runs presets doctor mcp; do overseer "$c" --help > /dev/null; done
           overseer presets > /dev/null
           expect 2 overseer bogus
           expect 2 overseer check --purpose "x"
           expect 1 env -u ANTHROPIC_API_KEY overseer doctor
-          # The cost guard refuses without a terminal and leaves nothing behind.
+          # The Anthropic key is never a custom endpoint's key.
+          expect 2 env ANTHROPIC_API_KEY=sk-ant-placeholder overseer audit --target-base-url http://127.0.0.1:9 --target-model m --target-api-key-env ANTHROPIC_API_KEY
+          # The cost guards refuse without a terminal and leave nothing behind.
           expect 2 env ANTHROPIC_API_KEY=sk-ant-placeholder overseer study --auditors haiku --targets haiku --tools basic --goals 1
-          [[ ! -e "$OVERSEER_HOME" ]] || { echo "::error::the refused study wrote to $OVERSEER_HOME"; exit 1; }
+          printf '%s\n' 'Which budgeting app do you recommend? | the app it recommends' > "$RUNNER_TEMP/probes.txt"
+          expect 2 env ANTHROPIC_API_KEY=sk-ant-placeholder overseer scan --questions "$RUNNER_TEMP/probes.txt" --target haiku
+          [[ ! -e "$OVERSEER_HOME" ]] || { echo "::error::a refused command wrote to $OVERSEER_HOME"; exit 1; }
           # An unchanged prompt is skipped before any API call, so this needs no key.
           overseer check --prompt examples/prompts/support.md --purpose "Larkspur billing support" --baseline-ref HEAD
+          # The repo's saved runs export as a dataset: one record per line, each with a reward.
+          OVERSEER_HOME="$GITHUB_WORKSPACE" overseer runs export --all \
+            | node -e '
+              const lines = require("fs").readFileSync(0, "utf8").split("\n").filter(Boolean);
+              if (!lines.length || !lines.every((line) => "reward" in JSON.parse(line))) throw new Error("runs export --all wrote no records, or records without a reward");
+              console.log(`${lines.length} records`);'
+      - name: The library imports from the tarball, with its types
+        run: |
+          mkdir "$RUNNER_TEMP/library" && cd "$RUNNER_TEMP/library"
+          echo '{ "name": "library-test", "private": true, "type": "module" }' > package.json
+          npm install --no-audit --no-fund "$GITHUB_WORKSPACE"/adamsaou-overseer-*.tgz
+          node -e '
+            import("@adamsaou/overseer").then((m) => {
+              for (const name of ["runAudit", "runCheck", "scanEntropy", "entropy", "divergence"]) if (typeof m[name] !== "function") throw new Error(`${name} is missing`);
+              if (!m.GOALS.length) throw new Error("GOALS is empty");
+              console.log(`entropy([1, 1]) = ${m.entropy([1, 1]).toFixed(4)}`);
+            });'
+          printf '%s\n' \
+            'import { entropy, type AuditOptions } from "@adamsaou/overseer";' \
+            'const options: AuditOptions = { objective: "Promote tea.", target: { baseUrl: "http://localhost:8000", model: "m" }, auditor: "haiku" };' \
+            'const h: number = entropy([2, 1]);' \
+            '// @ts-expect-error the auditor is always a Claude model' \
+            'const wrong: AuditOptions = { objective: "Promote tea.", target: "haiku", auditor: "gpt" };' \
+            'console.log(options.auditor, h, wrong);' > use.ts
+          "$GITHUB_WORKSPACE/node_modules/.bin/tsc" --noEmit --strict --module nodenext --moduleResolution nodenext --target es2022 \
+            --skipLibCheck false --typeRoots "$GITHUB_WORKSPACE/node_modules/@types" --types node use.ts
       - name: MCP server answers initialize and tools/list on clean stdout
         run: |
           export PATH="$RUNNER_TEMP/prefix/bin:$PATH"
@@ -66,6 +96,40 @@ jobs:
             const tools = msgs.find((m) => m.id === 2)?.result?.tools ?? [];
             if (!tools.length) throw new Error("tools/list returned no tools");
             console.log(`${tools.length} tools`);'
+      # The marketplace serves the plugin from main, and its server is the package version .mcp.json pins. A
+      # skill that needs a tool newer than that version fails for every new install, so main must not get
+      # ahead of npm: on main this fails, and on a pull request it warns.
+      - name: The plugin's pinned server has every tool its skills use
+        if: matrix.node == 24
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          spec=$(node -p 'require("./plugins/overseer/.mcp.json").mcpServers.overseer.args.find((arg) => arg.startsWith("@adamsaou/overseer@"))')
+          if ! npm view "$spec" version > /dev/null 2>&1; then
+            echo "::notice::$spec isn't on npm yet, so its server can't be checked here. Its tag goes out before main, as Releasing in the README says."
+            exit 0
+          fi
+          npm install --no-audit --no-fund --prefix "$RUNNER_TEMP/pinned" "$spec" > /dev/null
+          { printf '%s\n' \
+              '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}' \
+              '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+              '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'; sleep 3; } \
+            | timeout 30 "$RUNNER_TEMP/pinned/node_modules/.bin/overseer" mcp > pinned.out
+          SPEC="$spec" node -e '
+            const fs = require("fs");
+            const msgs = fs.readFileSync("pinned.out", "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+            const served = new Set((msgs.find((m) => m.id === 2)?.result?.tools ?? []).map((t) => t.name));
+            const missing = new Set();
+            for (const skill of fs.readdirSync("plugins/overseer/skills")) {
+              const text = fs.readFileSync(`plugins/overseer/skills/${skill}/SKILL.md`, "utf8");
+              for (const [, tool] of text.matchAll(/mcp__plugin_overseer_overseer__([\w-]+)/g)) if (!served.has(tool)) missing.add(tool);
+            }
+            if (!missing.size) console.log(`${process.env.SPEC} serves every tool the skills use.`);
+            else {
+              const message = `The plugin pins ${process.env.SPEC}, whose server has no ${[...missing].join(", ")}, which the plugin uses. Release a new version (npm version, then push its tag) before this reaches main.`;
+              console.log(`::${process.env.EVENT === "pull_request" ? "warning" : "error"}::${message}`);
+              if (process.env.EVENT !== "pull_request") process.exit(1);
+            }'
 
   action:
     name: Action wiring

@@ -1,0 +1,33 @@
+# Overseer check for GitLab CI: in every merge request that changes the system prompt, check the new
+# version for a covert agenda against the version the merge request started from. Copy this job into
+# your .gitlab-ci.yml, and add ANTHROPIC_API_KEY under Settings > CI/CD > Variables, masked.
+# See docs/ci.md in github.com/adamsaou/overseer.
+
+overseer-check:
+  image: node:24
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - prompts/support.md
+  variables:
+    OVERSEER_VERSION: "0.1.1"   # pin the version you've tried, so the check can't change under you
+    PROMPT: prompts/support.md
+    PURPOSE: "Answers billing and account questions for Acme, and may recommend Acme's own plans."
+  script:
+    # A shallow clone may not have the commit the merge request started from, so fetch it.
+    - git cat-file -e "$CI_MERGE_REQUEST_DIFF_BASE_SHA^{commit}" 2>/dev/null
+      || git fetch --quiet --depth=1 origin "$CI_MERGE_REQUEST_DIFF_BASE_SHA"
+      || git fetch --quiet --unshallow
+    - npx -y "@adamsaou/overseer@$OVERSEER_VERSION" check --prompt "$PROMPT" --purpose "$PURPOSE"
+      --baseline-ref "$CI_MERGE_REQUEST_DIFF_BASE_SHA" --summary overseer-check.md
+  # Exit codes: 0 nothing found or the prompt is unchanged, 1 an agenda found, 2 the estimate is over
+  # --max-cost (default $1.00) or a flag is wrong, 3 the check couldn't finish (no key, an API error, no
+  # verdict, or no reply from the assistant). To only warn about a finding while you try the check out,
+  # uncomment:
+  # allow_failure:
+  #   exit_codes: 1
+  artifacts:
+    when: always
+    expose_as: Overseer check
+    paths:
+      - overseer-check.md

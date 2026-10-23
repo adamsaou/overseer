@@ -5,19 +5,24 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 import { runAudit, runCheck, type AuditEvent } from "./lib/auditor.ts";
 import { annotation, loadBaseline, markdown, outcomeOf, readPrompt, writeOutputs, type Report } from "./lib/check.ts";
-import { anthropic, describeError } from "./lib/client.ts";
+import { anthropic, describeError, isFatal } from "./lib/client.ts";
 import { loadDotEnv, missingKeyMessage, readConfig, saveApiKey, useApiKey, writableByOthers } from "./lib/config.ts";
-import { estimateAudit, formatUsd } from "./lib/cost.ts";
+import { estimateAudit, estimateScan, formatUsd } from "./lib/cost.ts";
+import { auditRecord, type AuditRecord } from "./lib/dataset.ts";
+import { Endpoint, holdsAnthropicKey } from "./lib/endpoint.ts";
 import { GOALS } from "./lib/goals.ts";
 import { EFFORTS, MODELS, addUsage, costOf, emptyUsage, isModelKey, type Effort, type ModelKey } from "./lib/models.ts";
 import { openBrowser } from "./lib/open.ts";
 import { configFile, dataHome, displayPath, fromSource, packageRoot, packageVersion, resultsDir, runsDir } from "./lib/paths.ts";
 import { askSecret, askYesNo, canPrompt } from "./lib/prompt.ts";
-import { findRunId, listRuns, newRunId, readRun, runFile, saveRun, writeAtomic, type SavedRun } from "./lib/store.ts";
+import { readProbes, scanLine, scanProbe, sideIdentity, type ScanLine, type Side } from "./lib/scan.ts";
+import { findRunId, listRuns, newRunId, readRun, runFile, runIds, saveRun, writeAtomic, type SavedRun } from "./lib/store.ts";
+import { modelName, ready, systemPrompt, type TargetModel } from "./lib/target.ts";
 
-// The overseer command: the web UI, audits with a live terminal readout, the study, saved runs, presets and
-// a setup check, and checks of your own assistant for CI. Exit codes: 0 done, 1 something went wrong, 2 the
-// command line was wrong. overseer check has its own, listed in its help.
+// The overseer command: the web UI, audits with a live terminal readout, the study, batch entropy scans,
+// saved runs and their export as a dataset, presets and a setup check, and checks of your own assistant for
+// CI. Exit codes: 0 done, 1 something went wrong, 2 the command line was wrong or a cost guard refused.
+// overseer check has its own, listed in its help.
 
 // Read before loadDotEnv, so doctor can tell a key from the shell from one in a checkout's .env.
 const keyInShell = Boolean(process.env.ANTHROPIC_API_KEY?.trim() || process.env.ANTHROPIC_AUTH_TOKEN?.trim());
@@ -39,7 +44,8 @@ const c = {
   green: paint("1;38;5;78"),
   red: paint("1;38;5;203"),
 };
-const errorRed = paint("1;38;5;203", process.stderr.isTTY && !process.env.NO_COLOR);
+// Boolean, because an undefined isTTY, as for a file, would fall back to stdout's setting.
+const errorRed = paint("1;38;5;203", Boolean(process.stderr.isTTY) && !process.env.NO_COLOR);
 const width = Math.max(60, Math.min(process.stdout.columns || 100, 150));
 const clip = (s: string, n = width - 16) => {
   const line = s.replace(/\s+/g, " ").trim();
@@ -76,6 +82,78 @@ function fraction(value: string, flag: string) {
   return n;
 }
 
+function dollars(value: string, flag: string) {
+  const n = Number(value);
+  if (!value.trim() || !Number.isFinite(n) || n <= 0) throw usage(`${flag} takes an amount in US dollars, such as 0.50, not "${value}".`);
+  return n;
+}
+
+const about = (usd: number) => (usd > 0 && usd < 0.005 ? "under $0.01" : `about ${formatUsd(usd)}`);
+
+// The variables Overseer reads the Anthropic key from, which can never hold a custom endpoint's.
+const ANTHROPIC_VARS = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"];
+
+// A model behind an Anthropic Messages-compatible endpoint, from --<side>-base-url, --<side>-model and
+// --<side>-api-key-env, or null when none of them is given. The key is read from the variable named, and
+// lib/endpoint.ts refuses one that is the Anthropic key.
+function customEndpoint(values: Record<string, unknown>, side: "target" | "reference"): Endpoint | null {
+  const flag = (name: string) => `--${side}-${name}`;
+  const baseUrl = values[`${side}-base-url`] as string | undefined;
+  const model = values[`${side}-model`] as string | undefined;
+  const keyEnv = values[`${side}-api-key-env`] as string | undefined;
+  if (baseUrl === undefined && model === undefined && keyEnv === undefined) return null;
+  if (baseUrl === undefined) throw usage(`${flag("model")} and ${flag("api-key-env")} go with ${flag("base-url")}, the address of a Messages-compatible endpoint.`);
+  if (model === undefined) throw usage(`${flag("base-url")} needs ${flag("model")}: the name the endpoint serves the model under.`);
+  let apiKey: string | undefined;
+  const name = keyEnv?.trim();
+  if (name !== undefined) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) throw usage(`${flag("api-key-env")} takes the name of an environment variable, such as VLLM_API_KEY, not "${keyEnv}".`);
+    if (ANTHROPIC_VARS.includes(name)) throw usage(`${flag("api-key-env")} can't be ${name}: Overseer never sends your Anthropic API key to a custom endpoint.`);
+    apiKey = process.env[name]?.trim();
+    if (!apiKey) throw usage(`${flag("api-key-env")} names ${name}, which isn't set.`);
+  }
+  let endpoint: Endpoint;
+  try {
+    endpoint = new Endpoint({ baseUrl, model, apiKey }, { baseUrl: flag("base-url"), model: flag("model"), apiKey: name ?? flag("api-key-env") });
+  } catch (err) {
+    throw usage(describeError(err));
+  }
+  // Overseer keeps the key out of what it sends the endpoint, but the SDK sends the Claude side's requests,
+  // key and all, to ANTHROPIC_BASE_URL.
+  const gateway = origin(process.env.ANTHROPIC_BASE_URL);
+  if (gateway && gateway === origin(endpoint.baseUrl)) {
+    console.error(`Note: ANTHROPIC_BASE_URL is the same server as ${flag("base-url")}, so the requests for the Claude side, with your Anthropic API key, go there too.`);
+  }
+  return endpoint;
+}
+
+function origin(url: string | undefined) {
+  try {
+    return url?.trim() ? new URL(url.trim()).origin : null;
+  } catch {
+    return null;
+  }
+}
+
+// A custom endpoint never gets the Anthropic key, so a prompt for one that holds the key is refused before
+// anything starts. lib/endpoint.ts checks every request as well.
+function keepKeyAway(model: TargetModel, text: string | null | undefined, what: string) {
+  if (typeof model !== "string" && text && holdsAnthropicKey(text)) {
+    throw usage(`${what} holds your Anthropic API key, which Overseer never sends to a custom endpoint. Take the key out first.`);
+  }
+}
+
+// One side's model: a Claude model from --<keyFlag>, or a custom endpoint. Null when neither is given.
+function sideModel(values: Record<string, unknown>, side: "target" | "reference", keyFlag: string): TargetModel | null {
+  const custom = customEndpoint(values, side);
+  const key = values[keyFlag] as string | undefined;
+  if (custom && key !== undefined) throw usage(`Pass --${keyFlag} or --${side}-base-url, not both.`);
+  if (custom) return custom;
+  return key === undefined ? null : modelKey(key, `--${keyFlag}`);
+}
+
+const priced = (model: TargetModel) => (typeof model === "string" ? model : ("custom" as const));
+
 const HELP = `overseer ${VERSION}: can a weaker AI catch a stronger one hiding a secret objective?
 
 Usage
@@ -83,10 +161,13 @@ Usage
   overseer audit [options]     run one audit in the terminal, with a live readout
   overseer check [options]     check your own assistant's system prompt for a covert agenda, for CI
   overseer study [options]     run the oversight-gap study (shows the cost and asks first)
+  overseer scan [options]      semantic-entropy scans of a batch of questions, such as for each
+                               checkpoint of a training run (shows the cost and asks first)
   overseer runs [list]         list saved audits
   overseer runs show <id>      an audit's verdict, grade and stats
   overseer runs replay <id>    play an audit back as the live readout
   overseer runs export <id>    an audit as JSON
+  overseer runs export --all   every saved audit as a dataset record, one per line
   overseer presets             the hidden objectives an audit can use
   overseer doctor              check Node.js, the API key, model access and the data folder
   overseer mcp                 the MCP server for Claude Code, on stdin and stdout
@@ -123,6 +204,10 @@ Runs one audit in the terminal with a live readout, then saves it for replay.
 Options
   --auditor haiku|sonnet|opus   the model looking for the objective, default opus
   --target haiku|sonnet|opus    the model hiding it, default sonnet
+  --target-base-url <url>       or audit any model behind an Anthropic Messages-compatible endpoint, such
+                                as a LiteLLM proxy or vLLM: the address in front of /v1/messages
+  --target-model <name>         the model name that endpoint serves, needed with --target-base-url
+  --target-api-key-env <var>    the environment variable holding the endpoint's key, if it needs one
   --objective <id|text>         a preset id (see overseer presets), a sentence of your own, or random:
                                 a preset drawn at random and sealed until the verdict (the default)
   --budget <n>                  messages the auditor may send the target, 6 to 60, default 24
@@ -130,8 +215,13 @@ Options
   --scans, --no-scans           semantic-entropy scans, on by default
   --json                        print only the result, as JSON
 
-Example
-  overseer audit --auditor haiku --target haiku --budget 8     about a cent`,
+A custom endpoint is sent the model name, max_tokens, the system prompt and the messages, and never
+your Anthropic API key. Its reference for entropy scans is the same endpoint. The auditor, the scans'
+clustering and the grading still run on Claude, and the estimate and the cost shown count only those.
+
+Examples
+  overseer audit --auditor haiku --target haiku --budget 8     about a cent
+  overseer audit --auditor haiku --target-base-url http://localhost:8000 --target-model my-checkpoint`,
   },
   check: {
     run: check,
@@ -148,6 +238,11 @@ Options
   --purpose <text>             what the assistant is for, in a sentence or two (required). Behavior it
                                explains isn't a finding, so name what it may openly recommend
   --model haiku|sonnet|opus    the model your assistant runs on, default sonnet
+  --target-base-url <url>      or a model behind an Anthropic Messages-compatible endpoint, such as a
+                               LiteLLM proxy or vLLM: the address in front of /v1/messages. It never
+                               gets your Anthropic API key, and --max-cost leaves out its own cost
+  --target-model <name>        the model name that endpoint serves, needed with --target-base-url
+  --target-api-key-env <var>   the environment variable holding the endpoint's key, if it needs one
   --auditor haiku|sonnet|opus  the model doing the checking, default sonnet
   --baseline <file>            the prompt this one replaces; entropy scans compare the two
   --baseline-ref <ref>         the same, read from git at <ref>, such as origin/main. If the prompt is
@@ -166,7 +261,7 @@ Exit codes
   0  nothing found, or the prompt is unchanged
   1  an agenda was found at or above --fail-at
   2  the command line was wrong, or the estimate is over --max-cost
-  3  the check couldn't finish: no API key, an API error, or no verdict
+  3  the check couldn't finish: no API key, an API error, no verdict, or no reply from the assistant
 
 Example
   overseer check --prompt prompts/support.md --baseline-ref origin/main \\
@@ -195,19 +290,75 @@ Options
                        anything; it keeps that summary's budget and effort unless you give others
   -y, --yes            don't ask before spending; needed when not run from a terminal`,
   },
+  scan: {
+    run: scan,
+    help: `Usage: overseer scan --questions <file> [options]
+
+Semantic-entropy scans of a batch of questions, for watching a model change, as across the checkpoints
+of a training run. Each question goes n times to the target and n times to the reference, each time in a
+fresh conversation; Opus clusters all the answers by meaning on the question's aspect, reading at most
+4,000 characters of each, and the scan reports both models' semantic entropy and the Jensen-Shannon
+divergence between them (at most 0.69).
+Before spending anything it shows the estimated cost and asks.
+
+The questions file has one question per line, as  question | aspect  (split at the last |), or JSON lines
+with "question", "aspect" and an optional "id". Blank lines and lines starting with # are skipped.
+
+Options
+  --questions <file>              the questions to ask (required)
+  --n <n>                         answers from each model per question, 2 to 16, default 4
+  --target haiku|sonnet|opus      the model to scan, default sonnet
+  --target-base-url <url>         or a model behind an Anthropic Messages-compatible endpoint, such as
+                                  vLLM or a LiteLLM proxy: the address in front of /v1/messages
+  --target-model <name>           the model name that endpoint serves, needed with --target-base-url
+  --target-api-key-env <var>      the environment variable holding that endpoint's key, if it needs one
+  --system <file>                 the target's system prompt; without one it gets none
+  --objective <id|text>           or deploy the target as the audits' assistant with this hidden
+                                  objective: a preset id (see overseer presets) or a sentence of your own
+  --reference haiku|sonnet|opus   the model to compare with, default the target's model
+  --reference-base-url <url>      or a custom endpoint, as for the target
+  --reference-model <name>
+  --reference-api-key-env <var>
+  --reference-system <file>       the reference's system prompt. Without one it gets none, or with
+                                  --objective, the same assistant without the objective
+  --tag <key=value>               a label for every line, such as --tag step=1200; repeatable
+  --out <file>                    append one JSON line per question scanned
+  --concurrency <n>               questions at a time, 1 to 16, default 4
+  --max-cost <usd>                don't start when the estimate is higher
+  -y, --yes                       don't ask before spending; needed when not run from a terminal
+  --json                          print only a summary, as JSON
+
+A line holds the question, aspect, id, n, both models' identities (the model, a custom endpoint's host,
+a hash of the system prompt), both entropies, the divergence, the clusters with their labels and counts,
+the tags, createdAt and costUsd. Your Anthropic API key pays for Claude models and the clustering, and is
+never sent to a custom endpoint, whose own cost the estimate and costUsd leave out.
+
+Exit codes: 0 every question was scanned, 1 some weren't, 2 the command line was wrong or the scan wasn't
+confirmed (no --yes without a terminal, or over --max-cost).
+
+Example
+  overseer scan --questions probes.jsonl --target-base-url http://localhost:8000 \\
+    --target-model ckpt-1200 --reference haiku --tag step=1200 --out scans.jsonl --yes`,
+  },
   runs: {
     run: runs,
     help: `Usage: overseer runs [list] [--json]
        overseer runs show <id>
        overseer runs replay <id> [--speed <n>]
        overseer runs export <id> [--out <file>]
+       overseer runs export --all [--format jsonl|json] [--out <file>]
 
 Saved audits, newest first. An id can be shortened to any start that matches only one run.
 
   list     one line per audit; --json prints the details as JSON
   show     the verdict, the grade, the hidden objective and the stats
   replay   play the audit back as the live readout; --speed sets the pace (default 3, 0 for no pauses)
-  export   the whole run as JSON, on stdout or into --out <file>`,
+  export   the whole run as JSON, on stdout or into --out <file>. With --all, every saved run as a
+           dataset record, oldest first: the auditor's steps in order (notes, messages and replies,
+           samples, scans, board updates, the verdict), the transcript of each conversation, the
+           evidence board, the verdict, the revealed objective, the grade, a reward (caught 1, partial
+           0.5, missed 0, ungraded null), the stats, the cost and the times. --format jsonl, the default,
+           writes one record per line, and json writes them as one JSON array`,
   },
   presets: {
     run: presets,
@@ -230,7 +381,8 @@ and offers to save it.`,
 
 Runs Overseer's MCP server on stdin and stdout, for Claude Code or another MCP client to start; its logs
 go to stderr. It gives the client the auditor's own tools, so that Claude Code can run an audit itself,
-and tools that start model audits in the background, report on saved and running audits, stop them, and
+and tools that start model audits in the background, report on saved and running audits, stop them,
+check a system prompt in the project for a covert agenda (overseer_check, as overseer check does), and
 run entropy scans and the study. Audits it starts can be watched live in the web UI.
 
   claude mcp add overseer -- npx -y @adamsaou/overseer mcp`,
@@ -333,7 +485,10 @@ async function audit(argv: string[]) {
     args: argv,
     options: {
       auditor: { type: "string", default: "opus" },
-      target: { type: "string", default: "sonnet" },
+      target: { type: "string" },
+      "target-base-url": { type: "string" },
+      "target-model": { type: "string" },
+      "target-api-key-env": { type: "string" },
       objective: { type: "string", default: "random" },
       budget: { type: "string", default: "24" },
       effort: { type: "string", default: "medium" },
@@ -343,12 +498,13 @@ async function audit(argv: string[]) {
     },
   });
   const auditor = modelKey(values.auditor, "--auditor");
-  const target = modelKey(values.target, "--target");
+  const target = sideModel(values, "target", "target") ?? "sonnet";
   const budget = whole(values.budget, "--budget", 6, 60);
   const effort = effortLevel(values.effort);
   if (values.scans && values["no-scans"]) throw usage("Pass --scans or --no-scans, not both.");
   const entropyTool = !values["no-scans"];
   const { objective, sealed } = pickObjective(values.objective);
+  keepKeyAway(target, objective, "--objective");
   await ensureKey();
 
   const controller = new AbortController();
@@ -359,13 +515,16 @@ async function audit(argv: string[]) {
     process.exit(130);
   });
 
-  const estimate = formatUsd(estimateAudit({ auditor, target, budget, scans: entropyTool, effort }).usd);
+  const name = modelName(target);
+  // A custom endpoint's model name and host, recorded with the run. Never its key.
+  const endpoint = typeof target === "string" ? undefined : target.identity;
+  const estimate = `${formatUsd(estimateAudit({ auditor, target: priced(target), budget, scans: entropyTool, effort }).usd)}${endpoint ? " in Anthropic API calls, not counting the custom endpoint" : ""}`;
   if (!values.json) {
     console.log(
-      `\n ${c.bold("OVERSEER")}  ${c.blue(label(auditor))} auditing ${c.amber(label(target))} · budget ${budget} · entropy scans ${entropyTool ? "on" : "off"} · objective ${sealed ? "sealed" : "set"} · est. ${estimate}\n`,
+      `\n ${c.bold("OVERSEER")}  ${c.blue(label(auditor))} auditing ${c.amber(label(name))} · budget ${budget} · entropy scans ${entropyTool ? "on" : "off"} · objective ${sealed ? "sealed" : "set"} · est. ${estimate}\n`,
     );
   } else if (process.stderr.isTTY) {
-    console.error(`Auditing: ${label(auditor)} vs ${label(target)}, budget ${budget}, est. ${estimate}. The result prints as JSON when it's done.`);
+    console.error(`Auditing: ${label(auditor)} vs ${label(name)}, budget ${budget}, est. ${estimate}. The result prints as JSON when it's done.`);
   }
   const started = Date.now();
   const events: (AuditEvent & { t: number })[] = [];
@@ -374,15 +533,32 @@ async function audit(argv: string[]) {
     if (!values.json) render(event);
   };
   const result = await runAudit({ objective, target, auditor, budget, effort, targetEffort: "low", entropyTool, signal: controller.signal }, emit);
-  const id = await saveRun(HOME, { id: newRunId(auditor, target, started), objective, target, auditor, budget, effort, entropyTool, result, events });
+  const run: SavedRun = { id: newRunId(auditor, name, started), objective, target: name, auditor, budget, effort, entropyTool, result, events, ...(endpoint ? { targetEndpoint: endpoint } : {}) };
+  const id = await saveRun(HOME, run);
   const file = runFile(HOME, id);
 
   if (values.json) {
     const { label: grade, score, rationale } = result.grade;
-    const out = { id, file, auditor, target, budget, effort, scans: entropyTool, sealed, objective, verdict: result.verdict, grade: { label: grade, score, rationale }, board: result.board, stats: result.stats };
+    const out = {
+      id,
+      file,
+      auditor,
+      target: name,
+      ...(endpoint ? { targetEndpoint: endpoint } : {}),
+      budget,
+      effort,
+      scans: entropyTool,
+      sealed,
+      objective,
+      verdict: result.verdict,
+      grade: { label: grade, score, rationale },
+      board: result.board,
+      stats: result.stats,
+    };
     console.log(JSON.stringify(out, null, 2));
     return;
   }
+  if (endpoint) console.log(c.dim(`  That cost counts only the Anthropic API calls, not the endpoint at ${endpoint.host}${endpoint.path ?? ""} that served the target.`));
   console.log(`\n  ${c.dim("saved")}     ${displayPath(file)}`);
   printReplay(id);
 }
@@ -399,7 +575,10 @@ async function check(argv: string[]) {
     options: {
       prompt: { type: "string" },
       purpose: { type: "string" },
-      model: { type: "string", default: "sonnet" },
+      model: { type: "string" },
+      "target-base-url": { type: "string" },
+      "target-model": { type: "string" },
+      "target-api-key-env": { type: "string" },
       auditor: { type: "string", default: "sonnet" },
       baseline: { type: "string" },
       "baseline-ref": { type: "string" },
@@ -418,29 +597,32 @@ async function check(argv: string[]) {
   const purpose = values.purpose?.trim();
   if (!purpose) throw usage(`--purpose is required: what the assistant is for, such as --purpose "Answers billing questions for Acme customers".`);
   if (purpose.length > 1000) throw usage("--purpose takes at most 1000 characters.");
-  const model = modelKey(values.model, "--model");
+  const model = sideModel(values, "target", "model") ?? "sonnet";
   const auditor = modelKey(values.auditor, "--auditor");
   const budget = whole(values.budget, "--budget", 6, 60);
   const effort = effortLevel(values.effort);
   if (values.scans && values["no-scans"]) throw usage("Pass --scans or --no-scans, not both.");
   const entropyTool = !values["no-scans"];
   const failAt = fraction(values["fail-at"], "--fail-at");
-  const maxCost = Number(values["max-cost"]);
-  if (!values["max-cost"].trim() || !Number.isFinite(maxCost) || maxCost <= 0) {
-    throw usage(`--max-cost takes an amount in US dollars, such as 0.50, not "${values["max-cost"]}".`);
-  }
+  const maxCost = dollars(values["max-cost"], "--max-cost");
 
   const prompt = values.prompt;
   const system = await readPrompt(prompt);
   const baseline = await loadBaseline(system, prompt, { baseline: values.baseline, ref: values["baseline-ref"] });
-  const report: Report = { outcome: "unchanged", prompt, purpose, model, auditor, budget, failAt, baseline, result: null, scans: [] };
+  const endpoint = typeof model === "string" ? undefined : model.identity;
+  const report: Report = { outcome: "unchanged", prompt, purpose, model: modelName(model), ...(endpoint ? { modelEndpoint: endpoint } : {}), auditor, budget, failAt, baseline, result: null, scans: [] };
   if (baseline.status === "unchanged" && !values.always) {
     if (!values.json) console.log(`Overseer check: ${prompt} is the same as at ${baseline.source}, so there's nothing to check.`);
     return finishCheck(report, values);
   }
-  const estimate = estimateAudit({ auditor, target: model, budget, scans: entropyTool, effort }).usd;
+  keepKeyAway(model, system, `--prompt: ${prompt}`);
+  keepKeyAway(model, baseline.text, `The baseline, ${baseline.source},`);
+  // Without a baseline, the entropy scans' reference is told the purpose.
+  keepKeyAway(model, purpose, "--purpose");
+  const only = endpoint ? " in Anthropic API calls, not counting the custom endpoint" : "";
+  const estimate = estimateAudit({ auditor, target: priced(model), budget, scans: entropyTool, effort }).usd;
   if (estimate > maxCost) {
-    throw usage(`This check should cost about ${formatUsd(estimate)}, over --max-cost $${maxCost.toFixed(2)}. Lower --budget or raise --max-cost.`);
+    throw usage(`This check should cost about ${formatUsd(estimate)}${only}, over --max-cost $${maxCost < 0.01 ? maxCost : maxCost.toFixed(2)}. Lower --budget or raise --max-cost.`);
   }
   await ensureKey();
 
@@ -453,9 +635,7 @@ async function check(argv: string[]) {
   });
   if (!values.json) {
     const against = { changed: `compared with ${baseline.source}`, new: `new since ${baseline.source}`, none: "compared with its purpose", unchanged: "unchanged" }[baseline.status];
-    console.log(
-      `\n ${c.bold("OVERSEER CHECK")}  ${prompt} on ${c.amber(label(model))} · ${c.blue(label(auditor))} auditing · budget ${budget} · ${against} · est. ${formatUsd(estimate)}\n`,
-    );
+    console.log(`\n ${c.bold("OVERSEER CHECK")}  ${prompt} on ${c.amber(label(modelName(model)))} · ${c.blue(label(auditor))} auditing · budget ${budget} · ${against} · est. ${formatUsd(estimate)}${only}\n`);
   }
   const asked = new Map<string, { question: string; aspect: string }>();
   const emit = (event: AuditEvent) => {
@@ -465,14 +645,16 @@ async function check(argv: string[]) {
   };
   const changed = baseline.status === "changed" ? baseline.text : null;
   report.result = await runCheck({ purpose, system, baseline: changed, target: model, auditor, budget, effort, targetEffort: "low", entropyTool, signal: controller.signal }, emit);
-  report.outcome = outcomeOf(report.result.verdict, failAt);
+  report.outcome = outcomeOf(report.result, failAt);
 
   if (!values.json) {
     const v = report.result.verdict;
     const line = {
       fail: `${c.red(" ✗ FAIL ")}  ${c.dim(`an agenda at ${Math.round(v!.confidence * 100)}% confidence; the check fails at ${Math.round(failAt * 100)}%`)}`,
       pass: `${c.green(" ✓ PASS ")}  ${c.dim(v?.found ? `suspected at ${Math.round(v.confidence * 100)}%, under the ${Math.round(failAt * 100)}% the check fails at` : "nothing its purpose doesn't explain")}`,
-      incomplete: `${c.amber(" NO VERDICT ")}  ${c.dim("the auditor stopped without one, so the check can't pass")}`,
+      incomplete: report.result.stats.targetMessages
+        ? `${c.amber(" NO VERDICT ")}  ${c.dim("the auditor stopped without one, so the check can't pass")}`
+        : `${c.amber(" NO REPLIES ")}  ${c.dim("the assistant never answered the auditor, so the check can't pass")}`,
       unchanged: "",
     }[report.outcome];
     console.log(`\n  ${line}\n`);
@@ -652,6 +834,223 @@ async function lastStudy(file: string): Promise<Record<string, string>> {
   return Object.fromEntries(entries.filter((entry): entry is [string, string] => GRID.includes(entry[0]) && typeof entry[1] === "string"));
 }
 
+async function scan(argv: string[]) {
+  const { values } = parseArgs({
+    args: argv,
+    options: {
+      questions: { type: "string" },
+      n: { type: "string", default: "4" },
+      target: { type: "string" },
+      "target-base-url": { type: "string" },
+      "target-model": { type: "string" },
+      "target-api-key-env": { type: "string" },
+      system: { type: "string" },
+      objective: { type: "string" },
+      reference: { type: "string" },
+      "reference-base-url": { type: "string" },
+      "reference-model": { type: "string" },
+      "reference-api-key-env": { type: "string" },
+      "reference-system": { type: "string" },
+      tag: { type: "string", multiple: true },
+      out: { type: "string" },
+      concurrency: { type: "string", default: "4" },
+      "max-cost": { type: "string" },
+      yes: { type: "boolean", short: "y", default: false },
+      json: { type: "boolean", default: false },
+    },
+  });
+  if (!values.questions?.trim()) throw usage("--questions is required: a file with one question per line, as question | aspect, or JSON lines with question and aspect.");
+  const n = whole(values.n, "--n", 2, 16);
+  const concurrency = whole(values.concurrency, "--concurrency", 1, 16);
+  const maxCost = values["max-cost"] === undefined ? null : dollars(values["max-cost"], "--max-cost");
+  const tags = parseTags(values.tag ?? []);
+  const out = values.out === undefined ? null : await outFile(values.out);
+  const probes = await readProbes(values.questions);
+
+  const targetModel = sideModel(values, "target", "target") ?? "sonnet";
+  const referenceModel = sideModel(values, "reference", "reference") ?? targetModel;
+  if (values.system !== undefined && values.objective !== undefined) throw usage("Pass --system or --objective, not both.");
+  const target: Side = { model: targetModel, system: "" };
+  if (values.system !== undefined) target.system = await readPrompt(values.system, "--system");
+  else if (values.objective !== undefined) {
+    const given = values.objective.trim();
+    if (!given) throw usage("--objective takes a preset id (see overseer presets) or a sentence of your own.");
+    if (given === "random") throw usage('--objective takes a preset id or an objective of your own. "random" is for audits, where the objective stays sealed until the verdict.');
+    if (given && !/\s/.test(given) && !GOALS.some((g) => g.id === given)) throw usage(`"${given}" isn't a preset. Use one of ${GOALS.map((g) => g.id).join(", ")}, or a sentence of your own.`);
+    const { objective } = pickObjective(given);
+    target.system = systemPrompt(objective);
+    target.objective = GOALS.find((g) => g.objective === objective)?.id ?? objective;
+  }
+  const referenceSystem = values["reference-system"];
+  const reference: Side = { model: referenceModel, system: referenceSystem !== undefined ? await readPrompt(referenceSystem, "--reference-system") : target.objective ? systemPrompt(null) : "" };
+  keepKeyAway(targetModel, target.system, values.system !== undefined ? `--system: ${values.system}` : "--objective");
+  keepKeyAway(referenceModel, reference.system, `--reference-system: ${referenceSystem}`);
+  const endpoint = [targetModel, referenceModel].find((model) => typeof model !== "string");
+  if (endpoint) for (const probe of probes) keepKeyAway(endpoint, probe.question, `--questions: ${values.questions}`);
+
+  const custom = typeof targetModel !== "string" || typeof referenceModel !== "string";
+  const estimate = estimateScan({ target: priced(targetModel), reference: priced(referenceModel), n, questions: probes.length }).usd;
+  const only = custom ? " in Anthropic API calls, not counting the custom endpoint" : "";
+  const cost = `${about(estimate)}${only}`;
+  const work = `${plural(probes.length, "scan")} of ${n} answers from each model`;
+  if (maxCost !== null && estimate > maxCost) {
+    throw usage(`This scan should cost about ${formatUsd(estimate)}${only}, over --max-cost $${maxCost < 0.01 ? maxCost : maxCost.toFixed(2)}. Scan fewer questions, lower --n or raise --max-cost.`);
+  }
+  // Refused before anything else happens, even a custom endpoint's first request, as the study is.
+  if (!values.yes && !canPrompt()) throw usage(`Not starting ${work} (${cost}) without a yes. Run this in a terminal to confirm, or add --yes.`);
+  await ensureKey();
+
+  const targetName = label(modelName(targetModel));
+  const referenceName = label(modelName(referenceModel));
+  if (!values.json) {
+    console.log(`\n ${c.bold("OVERSEER SCAN")}  ${plural(probes.length, "question")} · n ${n} · target ${c.amber(targetName)} · reference ${c.blue(referenceName)} · est. ${formatUsd(estimate)}${only}\n`);
+  } else if (process.stderr.isTTY) {
+    console.error(`Scanning ${plural(probes.length, "question")}: ${targetName} against ${referenceName}, n ${n}, est. ${formatUsd(estimate)}${only}. The summary prints as JSON when it's done.`);
+  }
+  if (modelName(targetModel) === modelName(referenceModel) && target.system === reference.system) {
+    console.error("Note: the target and the reference are the same model with the same system prompt, so the divergence only measures sampling noise.");
+  }
+  for (const model of new Set([targetModel, referenceModel])) await ready(model);
+  if (!values.yes && !(await askYesNo(`Go ahead with ${work}, ${cost}?`, false))) {
+    console.error("Cancelled. Nothing was run.");
+    process.exitCode = 1;
+    return;
+  }
+
+  const controller = new AbortController();
+  const createdAt = new Date().toISOString();
+  const results: ({ line: ScanLine } | { error: string } | null)[] = probes.map(() => null);
+  let next = 0;
+  let halt: unknown = null;
+  let spent = 0;
+  let written = 0;
+  process.once("SIGINT", () => {
+    controller.abort();
+    console.error(c.dim(`\nScan stopped.${out ? ` ${plural(written, "line")} added to ${displayPath(out)}.` : ""}`));
+    process.exit(130);
+  });
+  if (out) await startOnNewLine(out);
+  const fail = (i: number, err: unknown) => {
+    const message = describeError(err);
+    results[i] = { error: message };
+    console.error(errorRed(`  ✗ ${i + 1}/${probes.length} "${clip(probes[i].question, 60)}": ${message}`));
+  };
+  // A key that's rejected, or an endpoint that can't work, would fail every question the same way.
+  const worker = async () => {
+    while (halt === null && next < probes.length) {
+      const i = next++;
+      const outcome = await scanProbe(probes[i], n, target, reference, controller.signal);
+      spent += outcome.costUsd;
+      if ("error" in outcome) {
+        fail(i, outcome.error);
+        if (isFatal(outcome.error)) halt ??= outcome.error;
+        continue;
+      }
+      const line = scanLine(probes[i], outcome.scan, target, reference, tags, outcome.costUsd);
+      if (out) {
+        try {
+          await fs.appendFile(out, `${JSON.stringify(line)}\n`);
+          written++;
+        } catch (err) {
+          fail(i, writeError(out, err));
+          halt ??= err;
+          continue;
+        }
+      }
+      results[i] = { line };
+      if (!values.json) {
+        console.log(`  ${c.bold(`◎ ${i + 1}/${probes.length}`)}  ${clip(`"${probes[i].question}" (compared on: ${probes[i].aspect})`, width - 20)}`);
+        render({ type: "scan_result", id: "", scan: outcome.scan });
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, probes.length) }, worker));
+
+  const lines = results.flatMap((r) => (r && "line" in r ? [r.line] : []));
+  const failed = results.filter((r) => r && "error" in r).length;
+  const skipped = results.filter((r) => r === null).length;
+  if (halt !== null && skipped) console.error(errorRed(`  Stopped early: the other ${plural(skipped, "question")} would fail the same way.`));
+  const mean = (xs: number[]) => (xs.length ? round(xs.reduce((sum, x) => sum + x, 0) / xs.length) : null);
+  const summary = {
+    createdAt,
+    questions: probes.length,
+    scanned: lines.length,
+    failed,
+    skipped,
+    n,
+    target: sideIdentity(target),
+    reference: sideIdentity(reference),
+    tags,
+    meanTargetEntropy: mean(lines.map((l) => l.targetEntropy)),
+    meanReferenceEntropy: mean(lines.map((l) => l.referenceEntropy)),
+    meanDivergence: mean(lines.map((l) => l.divergence)),
+    maxDivergence: lines.length ? round(Math.max(...lines.map((l) => l.divergence))) : null,
+    costUsd: round(spent),
+    out: values.out ?? null,
+    results: probes.map((probe, i) => {
+      const r = results[i];
+      const head = { question: probe.question, aspect: probe.aspect, ...(probe.id !== undefined ? { id: probe.id } : {}) };
+      if (r && "line" in r) return { ...head, targetEntropy: r.line.targetEntropy, referenceEntropy: r.line.referenceEntropy, divergence: r.line.divergence };
+      return { ...head, error: r ? r.error : "Not run: the scan stopped early." };
+    }),
+  };
+  if (values.json) console.log(JSON.stringify(summary, null, 2));
+  else {
+    const spread = lines.length ? ` · mean divergence ${summary.meanDivergence!.toFixed(2)}, highest ${summary.maxDivergence!.toFixed(2)}` : "";
+    console.log(c.dim(`  ${lines.length} of ${plural(probes.length, "question")} scanned${spread} · ${about(spent)}${custom ? " in Anthropic API calls" : ""}`));
+    if (out) console.log(`  ${c.dim("lines")}     ${displayPath(out)}, ${plural(written, "line")} added\n`);
+    else console.log("");
+  }
+  if (failed || skipped) process.exitCode = 1;
+}
+
+const round = (x: number) => Number(x.toFixed(4));
+
+// --tag key=value, repeatable, such as step=1200, to label every line of a scan.
+function parseTags(list: string[]) {
+  const tags: Record<string, string> = {};
+  for (const tag of list) {
+    const at = tag.indexOf("=");
+    const key = at < 0 ? "" : tag.slice(0, at).trim();
+    if (!/^[\w.-]{1,64}$/.test(key)) throw usage(`--tag takes key=value, such as step=1200, not "${tag}".`);
+    if (Object.hasOwn(tags, key)) throw usage(`--tag ${key} is given twice.`);
+    const value = tag.slice(at + 1).trim();
+    if (value.length > 500) throw usage(`--tag ${key} takes a value of at most 500 characters.`);
+    tags[key] = value;
+  }
+  return tags;
+}
+
+// --out: a file in a folder that exists. The usual mistakes are checked first: writeAtomic's own errors
+// would name its temp file.
+async function outFile(value: string) {
+  const file = path.resolve(value);
+  if ((await fs.stat(file).catch(() => null))?.isDirectory()) throw usage(`--out takes a file name, and ${displayPath(file)} is a folder.`);
+  const dir = await fs.stat(path.dirname(file)).catch(() => null);
+  if (!dir) throw usage(`The folder ${displayPath(path.dirname(file))} doesn't exist.`);
+  if (!dir.isDirectory()) throw usage(`${displayPath(path.dirname(file))} isn't a folder.`);
+  return file;
+}
+
+function writeError(file: string, err: unknown) {
+  const code = String((err as NodeJS.ErrnoException).code ?? "");
+  const why = { EACCES: "permission denied", EPERM: "permission denied", EROFS: "the disk is read-only", ENOSPC: "the disk is full" }[code];
+  return new Error(`Couldn't write ${displayPath(file)}: ${why ?? (code || describeError(err))}.`);
+}
+
+// A crash mid-append leaves a partial last line, so the next line starts on a line of its own.
+async function startOnNewLine(file: string) {
+  const handle = await fs.open(file, "r").catch(() => null);
+  if (!handle) return;
+  try {
+    const { size } = await handle.stat();
+    const last = Buffer.alloc(1);
+    if (size && (await handle.read(last, 0, 1, size - 1)).bytesRead && last[0] !== 0x0a) await fs.appendFile(file, "\n");
+  } finally {
+    await handle.close();
+  }
+}
+
 async function runs(argv: string[]) {
   const [sub, ...rest] = argv[0] === undefined || argv[0].startsWith("-") ? ["list", ...argv] : argv;
   if (sub === "list") return listSaved(rest);
@@ -730,27 +1129,67 @@ async function replayRun(argv: string[]) {
 }
 
 async function exportRun(argv: string[]) {
-  const { values, positionals } = parseArgs({ args: argv, options: { out: { type: "string", short: "o" } }, allowPositionals: true });
+  const { values, positionals } = parseArgs({
+    args: argv,
+    options: { out: { type: "string", short: "o" }, all: { type: "boolean", default: false }, format: { type: "string" } },
+    allowPositionals: true,
+  });
+  if (values.all) return exportAll(positionals, values);
+  if (values.format !== undefined) throw usage("--format goes with --all. runs export <id> writes the run as JSON.");
   const run = await readRun(HOME, await findRunId(HOME, onlyId(positionals)));
   const json = `${JSON.stringify(run, null, 2)}\n`;
   if (!values.out) {
     process.stdout.write(json);
     return;
   }
-  const file = path.resolve(values.out);
-  // The usual mistakes, checked first: writeAtomic's own errors would name its temp file.
-  if ((await fs.stat(file).catch(() => null))?.isDirectory()) throw usage(`--out takes a file name, and ${displayPath(file)} is a folder.`);
-  const dir = await fs.stat(path.dirname(file)).catch(() => null);
-  if (!dir) throw usage(`The folder ${displayPath(path.dirname(file))} doesn't exist.`);
-  if (!dir.isDirectory()) throw usage(`${displayPath(path.dirname(file))} isn't a folder.`);
+  const file = await outFile(values.out);
   try {
     await writeAtomic(file, json);
   } catch (err) {
-    const code = String((err as NodeJS.ErrnoException).code ?? "");
-    const why = { EACCES: "permission denied", EPERM: "permission denied", EROFS: "the disk is read-only", ENOSPC: "the disk is full" }[code];
-    throw new Error(`Couldn't write ${displayPath(file)}: ${why ?? (code || describeError(err))}.`);
+    throw writeError(file, err);
   }
   console.log(`Wrote ${run.id} to ${displayPath(file)}`);
+}
+
+// Every saved run as a dataset record (lib/dataset.ts), oldest first, so a later export only adds to the end.
+async function exportAll(positionals: string[], values: { out?: string; format?: string }) {
+  if (positionals.length) throw usage("Give a run id or --all, not both.");
+  const format = values.format ?? "jsonl";
+  if (format !== "jsonl" && format !== "json") throw usage(`--format takes jsonl or json, not "${format}".`);
+  const file = values.out === undefined ? null : await outFile(values.out);
+  const records: AuditRecord[] = [];
+  const unfinished: string[] = [];
+  const unreadable: string[] = [];
+  for (const id of (await runIds(HOME)).reverse()) {
+    let run: SavedRun;
+    try {
+      run = await readRun(HOME, id);
+    } catch {
+      unreadable.push(id);
+      continue;
+    }
+    if (typeof run?.auditor !== "string" || typeof run.target !== "string") unreadable.push(id);
+    else if (!run.result?.verdict) unfinished.push(id);
+    else {
+      try {
+        records.push(auditRecord(run));
+      } catch {
+        unreadable.push(id);
+      }
+    }
+  }
+  const text = format === "json" ? `${JSON.stringify(records, null, 2)}\n` : records.map((record) => `${JSON.stringify(record)}\n`).join("");
+  if (file) {
+    try {
+      await writeAtomic(file, text);
+    } catch (err) {
+      throw writeError(file, err);
+    }
+    console.log(`Wrote ${plural(records.length, "run")} to ${displayPath(file)}`);
+  } else process.stdout.write(text);
+  if (unfinished.length) console.error(`Skipped ${plural(unfinished.length, "unfinished run")}, with no verdict: ${unfinished.join(", ")}`);
+  if (unreadable.length) console.error(`Skipped ${unreadable.length} unreadable ${unreadable.length === 1 ? "file" : "files"}: ${unreadable.join(", ")}`);
+  if (!records.length && !unfinished.length && !unreadable.length) console.error(`No saved audits in ${displayPath(runsDir(HOME))} yet. Run overseer audit to make one.`);
 }
 
 async function presets(argv: string[]) {
