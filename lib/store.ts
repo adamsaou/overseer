@@ -88,7 +88,7 @@ export async function writeAtomic(file: string, contents: string) {
   }
 }
 
-async function runIds(home: string) {
+export async function runIds(home: string) {
   const names = await fs.readdir(runsDir(home)).catch((err: NodeJS.ErrnoException) => {
     if (err.code === "ENOENT") return [];
     throw err;

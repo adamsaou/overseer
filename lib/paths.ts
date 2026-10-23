@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -44,7 +45,26 @@ export function dataHome(): string {
 
 export const runsDir = (home: string) => path.join(home, "runs");
 export const resultsDir = (home: string) => path.join(home, "results");
+export const liveDir = (home: string) => path.join(home, "live");
 export const configFile = (home: string) => path.join(home, "config.json");
+
+// Tells two Overseer processes whether they share a data folder, without the web API showing its path.
+// Symbolic links are resolved, through the nearest folder that exists if this one doesn't yet.
+export function homeId(home: string): string {
+  let dir = path.resolve(home);
+  let rest = "";
+  for (;;) {
+    try {
+      dir = realpathSync(dir);
+      break;
+    } catch {
+      if (path.dirname(dir) === dir) break;
+      rest = path.join(path.basename(dir), rest);
+      dir = path.dirname(dir);
+    }
+  }
+  return createHash("sha256").update(path.join(dir, rest)).digest("hex").slice(0, 16);
+}
 
 export function packageVersion(): string {
   return JSON.parse(readFileSync(path.join(packageRoot(), "package.json"), "utf8")).version;

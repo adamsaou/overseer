@@ -6,3 +6,5 @@ dist/
 /config.json
 build/
 /results/last-study.json
+/live/
+/results/study.lock

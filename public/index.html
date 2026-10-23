@@ -284,7 +284,7 @@
 
 <script>
   const $ = (id) => document.getElementById(id);
-  const S = { labels: {}, goals: [], objective: "", sealed: false, note: null, grade: null, started: 0, timer: null };
+  const S = { labels: {}, goals: [], objective: "", sealed: false, note: null, grade: null, started: 0, timer: null, liveStarted: null, catchingUp: false };
 
   function banner(text, isError = false) {
     $("banner").textContent = text;
@@ -324,6 +324,8 @@
     await loadRuns();
     const params = new URLSearchParams(location.search);
     if (params.get("replay")) replay(params.get("replay"), Number(params.get("speed")) || 3);
+    // ?live=<run id> follows an audit started through the MCP server, from Claude Code, as it runs.
+    else if (params.get("live")) attach(params.get("live"));
     // Presenter shortcut: ?lens=<run id> opens straight onto that run's first entropy scan.
     if (params.get("lens")) {
       const run = await fetch(`/api/runs/${encodeURIComponent(params.get("lens"))}`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
@@ -401,6 +403,12 @@
       const body = await res.json().catch(() => ({}));
       return banner(body.error ?? `Server error ${res.status}`, true);
     }
+    await readEvents(res, handle);
+    stopClock();
+  }
+
+  // Server-sent events from a fetch response, one JSON event per data line.
+  async function readEvents(res, onEvent) {
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
@@ -412,10 +420,43 @@
       while ((cut = buffer.indexOf("\n\n")) >= 0) {
         const chunk = buffer.slice(0, cut);
         buffer = buffer.slice(cut + 2);
-        for (const line of chunk.split("\n")) if (line.startsWith("data: ")) handle(JSON.parse(line.slice(6)));
+        for (const line of chunk.split("\n")) if (line.startsWith("data: ")) onEvent(JSON.parse(line.slice(6)));
       }
     }
+  }
+
+  // The live log streams everything from the start, then each event as it happens, until the audit ends.
+  // An audit that isn't running any more plays back as a replay instead.
+  async function attach(id) {
+    let res;
+    try {
+      res = await fetch(`/api/live/${encodeURIComponent(id)}`);
+    } catch (err) {
+      return banner(`Couldn't reach the server: ${err.message}`, true);
+    }
+    if (res.status === 404) return replay(id, 3);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return banner(body.error ?? `Server error ${res.status}`, true);
+    }
+    goLive();
+    let ended = false;
+    try {
+      await readEvents(res, (e) => {
+        if (e.type === "live") S.liveStarted = e.started;
+        else if (e.type === "end") ended = true;
+        else {
+          // Events from before the page opened are caught up on without a lens for every past scan.
+          S.catchingUp = S.liveStarted !== null && S.liveStarted + (Number(e.t) || 0) < Date.now() - 5000;
+          handle(e);
+        }
+      });
+    } catch {
+      // A dropped connection; reported below.
+    }
+    S.catchingUp = false;
     stopClock();
+    if (!ended) banner("Lost the connection to Overseer before the audit finished. Reload the page to follow it again.", true);
   }
 
   async function replay(id, speed) {
@@ -440,7 +481,7 @@
       case "start":
         $("matchup").textContent = `${S.labels[e.auditor] ?? e.auditor} auditing ${S.labels[e.target] ?? e.target}`;
         $("entropyChip").classList.toggle("hidden", !e.entropyTool);
-        startClock();
+        startClock(S.liveStarted ?? Date.now());
         break;
       case "note_start":
         newNote(e.kind);
@@ -470,7 +511,7 @@
         break;
       case "scan_result":
         fillScan(e.id, e.scan);
-        showLens(e.scan);
+        if (!S.catchingUp) showLens(e.scan);
         break;
       case "scan_error": {
         const card = document.querySelector(`[data-scan="${e.id}"]`);
@@ -620,8 +661,8 @@
     if (el.scrollHeight - el.scrollTop - el.clientHeight < 200) el.scrollTop = el.scrollHeight;
   }
 
-  function startClock() {
-    S.started = Date.now();
+  function startClock(from) {
+    S.started = from;
     clearInterval(S.timer);
     S.timer = setInterval(() => ($("clock").textContent = fmt((Date.now() - S.started) / 1000)), 500);
   }

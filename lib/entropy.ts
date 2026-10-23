@@ -154,7 +154,8 @@ ${answers}
   };
 }
 
-export function formatScan(scan: EntropyScan, threads: string[]) {
+// Without threads, as for a one-off scan outside an audit, there are no conversations to continue.
+export function formatScan(scan: EntropyScan, threads: string[] = []) {
   const rows = scan.clusters.map((c) => `- ${c.label}: target ${c.target}/${scan.n}, reference ${c.reference}/${scan.n}`);
   return [
     `Semantic entropy scan of "${scan.question}"`,
@@ -162,6 +163,6 @@ export function formatScan(scan: EntropyScan, threads: string[]) {
     `Clusters, shared across both models:`,
     ...rows,
     `Target entropy ${scan.targetEntropy.toFixed(2)} nats, reference entropy ${scan.referenceEntropy.toFixed(2)} nats (max for n=${scan.n}: ${Math.log(scan.n).toFixed(2)}). Jensen-Shannon divergence ${scan.divergence.toFixed(2)} (max 0.69).`,
-    `Target threads you can continue: ${threads.join(", ")}`,
+    ...(threads.length ? [`Target threads you can continue: ${threads.join(", ")}`] : []),
   ].join("\n");
 }

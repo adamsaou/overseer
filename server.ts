@@ -1,18 +1,22 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import fs from "node:fs/promises";
+import fs, { type FileHandle } from "node:fs/promises";
 import http from "node:http";
 import { isIP } from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { StringDecoder } from "node:string_decoder";
+import { setTimeout as sleep } from "node:timers/promises";
 import { runAudit, type AuditEvent } from "./lib/auditor.ts";
 import { describeError } from "./lib/client.ts";
 import { apiKeySource, loadDotEnv, missingKeyMessage, useApiKey } from "./lib/config.ts";
 import { GOALS } from "./lib/goals.ts";
+import { liveFile, writerAlive } from "./lib/live.ts";
 import { EFFORTS, MODELS, MODEL_KEYS, isModelKey, type Effort } from "./lib/models.ts";
-import { dataHome, isMain, publicDir, resultsDir } from "./lib/paths.ts";
+import { dataHome, homeId, isMain, publicDir, resultsDir } from "./lib/paths.ts";
 import { listRuns, newRunId, runFile, saveRun } from "./lib/store.ts";
 
-// The local web app: the live audit and replay page, the study page, and the API they use.
+// The local web app: the live audit and replay page, the study page, and the API they use, including
+// GET /api/live/<id>, which follows an audit that the MCP server is running, from its live log.
 
 export type ServerOptions = {
   home: string;
@@ -23,6 +27,10 @@ export type ServerOptions = {
 };
 
 const MAX_BODY = 64 * 1024;
+// How often a caught-up live stream looks for new events, and how long it waits before checking that the
+// process writing the log is still there.
+const LIVE_POLL_MS = 250;
+const LIVE_QUIET_MS = 10000;
 
 export async function startServer({ home, port = 7878, host = "127.0.0.1", log = () => {} }: ServerOptions) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error(`The port must be a number from 0 to 65535, not ${port}.`);
@@ -56,6 +64,8 @@ export async function startServer({ home, port = 7878, host = "127.0.0.1", log =
           goals: GOALS,
           apiKey,
           ...(apiKey ? {} : { apiKeyHelp: missingKeyMessage(home) }),
+          // Lets the MCP server reuse this server only when it shows the same data folder.
+          homeId: homeId(home),
         });
       }
       if (req.method === "POST" && url.pathname === "/api/audit") return await audit(req, res);
@@ -65,6 +75,8 @@ export async function startServer({ home, port = 7878, host = "127.0.0.1", log =
       }
       const run = url.pathname.match(/^\/api\/runs\/([\w-]{1,200})$/);
       if (req.method === "GET" && run) return await sendFile(res, runFile(home, run[1]), "application/json");
+      const live = url.pathname.match(/^\/api\/live\/([\w-]{1,200})$/);
+      if (req.method === "GET" && live) return await follow(res, live[1]);
       if (req.method === "GET" && url.pathname === "/api/study") return await sendFile(res, path.join(resultsDir(home), "summary.json"), "application/json");
       sendJson(res, 404, { error: "Not found" });
     } catch (err) {
@@ -121,6 +133,71 @@ export async function startServer({ home, port = 7878, host = "127.0.0.1", log =
       if (!controller.signal.aborted) emit({ type: "error", message: describeError(err) });
     } finally {
       clearInterval(heartbeat);
+      res.end();
+    }
+  }
+
+  // Streams a live log as server-sent events, the same frames POST /api/audit sends, from its first line
+  // until its end line. A log whose writer died without one ends with an error. Without a log the audit
+  // isn't running, and the page falls back to its saved run.
+  async function follow(res: http.ServerResponse, id: string) {
+    let handle: FileHandle;
+    try {
+      handle = await fs.open(liveFile(home, id), "r");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return sendJson(res, 404, { error: "No audit with that id is running." });
+      throw err;
+    }
+    res.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache, no-transform", Connection: "keep-alive" });
+    let connected = true;
+    res.on("close", () => (connected = false));
+    const heartbeat = setInterval(() => {
+      if (!res.writableEnded) res.write(": keep-alive\n\n");
+    }, 15000);
+    const send = (line: string) => {
+      if (!res.writableEnded) res.write(`data: ${line}\n\n`);
+    };
+    const decoder = new StringDecoder("utf8");
+    const chunk = Buffer.alloc(64 * 1024);
+    let position = 0;
+    let partial = "";
+    let quiet = 0;
+    let writer: { pid?: unknown; start?: unknown; started?: unknown } = {};
+    let latest = 0;
+    try {
+      while (connected) {
+        // Read through the open file, which stays readable when the log is removed after the run is saved.
+        const { bytesRead } = await handle.read(chunk, 0, chunk.length, position);
+        if (bytesRead) {
+          position += bytesRead;
+          quiet = 0;
+          const lines = (partial + decoder.write(chunk.subarray(0, bytesRead))).split("\n");
+          partial = lines.pop() ?? "";
+          for (const line of lines) {
+            let event: { type?: unknown; pid?: unknown; start?: unknown; started?: unknown; t?: unknown };
+            try {
+              event = JSON.parse(line);
+            } catch {
+              continue;
+            }
+            if (event?.type === "live") writer = event;
+            else if (typeof event?.t === "number" && event.t > latest) latest = event.t;
+            send(line);
+            if (event?.type === "end") return;
+          }
+          continue;
+        }
+        if (quiet >= LIVE_QUIET_MS && !writerAlive(writer, (Number(writer.started) || 0) + latest)) {
+          send(JSON.stringify({ type: "error", message: "The process running this audit stopped before the audit finished." }));
+          send(JSON.stringify({ type: "end", status: "failed" }));
+          return;
+        }
+        await sleep(LIVE_POLL_MS);
+        quiet += LIVE_POLL_MS;
+      }
+    } finally {
+      clearInterval(heartbeat);
+      await handle.close();
       res.end();
     }
   }

@@ -6,14 +6,13 @@ import { parseArgs } from "node:util";
 import { runAudit, type AuditEvent } from "./lib/auditor.ts";
 import { anthropic, describeError } from "./lib/client.ts";
 import { loadDotEnv, missingKeyMessage, readConfig, saveApiKey, useApiKey, writableByOthers } from "./lib/config.ts";
-import { GRADE_USD, estimateAudit, formatUsd } from "./lib/cost.ts";
+import { estimateAudit, formatUsd } from "./lib/cost.ts";
 import { GOALS } from "./lib/goals.ts";
 import { EFFORTS, MODELS, addUsage, costOf, emptyUsage, isModelKey, type Effort, type ModelKey } from "./lib/models.ts";
 import { openBrowser } from "./lib/open.ts";
 import { configFile, dataHome, displayPath, fromSource, packageRoot, packageVersion, resultsDir, runsDir } from "./lib/paths.ts";
 import { askSecret, askYesNo, canPrompt } from "./lib/prompt.ts";
 import { findRunId, listRuns, newRunId, readRun, runFile, saveRun, writeAtomic, type SavedRun } from "./lib/store.ts";
-import type { StudyOptions } from "./study.ts";
 
 // The overseer command: the web UI, audits with a live terminal readout, the study, saved runs, presets and
 // a setup check. Exit codes: 0 done, 1 something went wrong, 2 the command line was wrong.
@@ -81,6 +80,7 @@ Usage
   overseer runs export <id>    an audit as JSON
   overseer presets             the hidden objectives an audit can use
   overseer doctor              check Node.js, the API key, model access and the data folder
+  overseer mcp                 the MCP server for Claude Code, on stdin and stdout
 
   overseer <command> --help    options for one command
   overseer --version
@@ -173,7 +173,19 @@ one at random stays sealed.`,
     help: `Usage: overseer doctor
 
 Checks the Node.js version, the API key (without showing it), access to the models with one tiny Haiku
-request (well under $0.001), and the data folder in use.`,
+request (well under $0.001), and the data folder in use. Without a key, in a terminal, it asks for one
+and offers to save it.`,
+  },
+  mcp: {
+    run: mcp,
+    help: `Usage: overseer mcp
+
+Runs Overseer's MCP server on stdin and stdout, for Claude Code or another MCP client to start; its logs
+go to stderr. It gives the client the auditor's own tools, so that Claude Code can run an audit itself,
+and tools that start model audits in the background, report on saved and running audits, stop them, and
+run entropy scans and the study. Audits it starts can be watched live in the web UI.
+
+  claude mcp add overseer -- npx -y @adamsaou/overseer mcp`,
   },
 };
 
@@ -387,7 +399,7 @@ function render(e: AuditEvent) {
     }
     case "done": {
       const s = e.stats;
-      console.log(c.dim(`\n  ${s.targetMessages} target messages · ${s.scans} scans · ${s.turns} turns · ${s.seconds}s · ≈ $${s.costUsd.toFixed(2)}`));
+      console.log(c.dim(`\n  ${plural(s.targetMessages, "target message")} · ${plural(s.scans, "scan")} · ${plural(s.turns, "turn")} · ${s.seconds}s · ≈ $${s.costUsd.toFixed(2)}`));
       break;
     }
     case "error":
@@ -398,7 +410,6 @@ function render(e: AuditEvent) {
 
 // The study's grid options, kept as flag strings so a resumed study goes through the same checks.
 const GRID = ["auditors", "targets", "tools", "goals", "reps", "budget", "effort", "concurrency"];
-const lastStudyFile = () => path.join(resultsDir(HOME), "last-study.json");
 
 async function study(argv: string[]) {
   const { values } = parseArgs({
@@ -418,8 +429,8 @@ async function study(argv: string[]) {
     },
   });
   const { summarize, resume, yes, ...given } = values;
-  const settings: Record<string, string | undefined> = { ...(resume ? await lastStudy() : {}), ...given };
-  const { parseStudyArgs, runStudy, shownSummary } = await import("./study.ts");
+  const { lastStudyFile, parseStudyArgs, runStudy, shownSummary, studySettings, studyUsd } = await import("./study.ts");
+  const settings: Record<string, string | undefined> = { ...(resume ? await lastStudy(lastStudyFile(HOME)) : {}), ...given };
   // --summarize rebuilds the summary the /study page shows now: a budget or effort not given comes from it,
   // not from the defaults.
   const shown = summarize ? await shownSummary(HOME) : null;
@@ -437,12 +448,12 @@ async function study(argv: string[]) {
     log,
     confirm: async ({ audits, regrades, estimate }) => {
       const work = [audits ? plural(audits, "audit") : "", regrades ? `${plural(regrades, "verdict")} to grade again` : ""].filter(Boolean).join(" and ");
-      const cost = formatUsd(estimate.usd + regrades * GRADE_USD);
+      const cost = formatUsd(studyUsd({ regrades, estimate }));
       if (!yes) {
         if (!canPrompt()) throw usage(`Not starting ${work} (about ${cost}) without a yes. Run this in a terminal to confirm, or add --yes.`);
         if (!(await askYesNo(`Go ahead with ${work}, about ${cost}?`, false))) return false;
       }
-      await writeAtomic(lastStudyFile(), `${JSON.stringify(studySettings(options), null, 2)}\n`);
+      await writeAtomic(lastStudyFile(HOME), `${JSON.stringify(studySettings(options), null, 2)}\n`);
       process.once("SIGINT", () => {
         console.error(`\nStopped. Finished audits are kept in ${displayPath(path.join(resultsDir(HOME), "study.jsonl"))}; overseer study --resume carries on.`);
         process.exit(130);
@@ -453,21 +464,7 @@ async function study(argv: string[]) {
   if (!outcome || outcome.failed) process.exitCode = 1;
 }
 
-function studySettings(o: StudyOptions): Record<string, string> {
-  return {
-    auditors: o.auditors.join(","),
-    targets: o.targets.join(","),
-    tools: o.modes.join(","),
-    goals: o.goals.map((g) => g.id).join(","),
-    reps: String(o.reps),
-    budget: String(o.budget),
-    effort: o.effort,
-    concurrency: String(o.concurrency),
-  };
-}
-
-async function lastStudy(): Promise<Record<string, string>> {
-  const file = lastStudyFile();
+async function lastStudy(file: string): Promise<Record<string, string>> {
   let text: string;
   try {
     text = await fs.readFile(file, "utf8");
@@ -594,6 +591,15 @@ async function presets(argv: string[]) {
   console.log(c.dim(`\n  overseer audit --objective <id> uses one. Without --objective, an audit draws one at random and keeps it sealed until the verdict.`));
 }
 
+async function mcp(argv: string[]) {
+  parseArgs({ args: argv, options: {} });
+  // From here on stdout carries the protocol. The server handles a client that goes away itself, marking
+  // its unfinished audits as stopped first, so the handler that exits at once on a closed pipe comes off.
+  process.stdout.off("error", stdoutError);
+  const { startMcp } = await import("./mcp.ts");
+  await startMcp();
+}
+
 async function doctor(argv: string[]) {
   parseArgs({ args: argv, options: {} });
   let problems = 0;
@@ -626,8 +632,15 @@ async function doctor(argv: string[]) {
     } else if (source === "config") {
       const mode = ((await fs.stat(configFile(HOME))).mode & 0o777).toString(8);
       report(true, `API key saved in ${displayPath(configFile(HOME))}`, process.platform === "win32" ? undefined : `Readable only by you (mode ${mode}).`);
+    } else if (!canPrompt()) {
+      report(false, "No API key", `${missingKeyMessage(HOME)} Or run overseer doctor in a terminal, which offers to save one.`);
+    } else if (await ensureKey(true)) {
+      // Pasted at the prompt, then saved or kept for this run, and checked like any other key below.
+      haveKey = true;
+      const saved = (await useApiKey(HOME)) === "config";
+      report(true, saved ? `API key saved in ${displayPath(configFile(HOME))}` : "API key entered, for this run only");
     } else {
-      report(false, "No API key", `${missingKeyMessage(HOME)} Or run overseer audit in a terminal to paste one and save it.`);
+      report(false, "No API key", missingKeyMessage(HOME));
     }
   } catch (err) {
     report(false, "The API key couldn't be read", describeError(err));
@@ -705,11 +718,12 @@ async function studyRows() {
 // The entry point comes last, so every declaration above is initialized before any command runs.
 let current = "";
 
-process.stdout.on("error", (err: NodeJS.ErrnoException) => {
-  // A closed pipe, as in overseer runs export <id> | head, just ends the output.
+// A closed pipe, as in overseer runs export <id> | head, just ends the output.
+function stdoutError(err: NodeJS.ErrnoException) {
   if (err.code === "EPIPE") process.exit(0);
   throw err;
-});
+}
+process.stdout.on("error", stdoutError);
 
 try {
   await main(process.argv.slice(2));

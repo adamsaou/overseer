@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "overseer": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@adamsaou/overseer@0.1.0",
+        "mcp"
+      ]
+    }
+  }
+}

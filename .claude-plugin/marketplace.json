@@ -1,0 +1,14 @@
+{
+  "name": "overseer",
+  "owner": {
+    "name": "Adam Saoudani",
+    "url": "https://github.com/adamsaou"
+  },
+  "description": "Overseer for Claude Code: audit Claude models for a hidden objective, with Claude Code itself as the auditor.",
+  "plugins": [
+    {
+      "name": "overseer",
+      "source": "./plugins/overseer"
+    }
+  ]
+}

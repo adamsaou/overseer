@@ -1,7 +1,8 @@
-import Anthropic from "@anthropic-ai/sdk";
+import Anthropic, { type ClientOptions } from "@anthropic-ai/sdk";
 
 let instance: Anthropic | undefined;
 let apiKey: string | undefined;
+let logLevel: ClientOptions["logLevel"];
 
 // The SDK logs with console by default, and its info and debug levels (ANTHROPIC_LOG) go to stdout, which
 // carries the MCP protocol and overseer audit --json. Every level goes to stderr instead.
@@ -9,8 +10,16 @@ const logger = { error: console.error, warn: console.error, info: console.error,
 
 // Created on first use so the server can start, and explain what's missing, without credentials.
 export function anthropic(): Anthropic {
-  instance ??= new Anthropic({ apiKey, maxRetries: 4, logger });
+  instance ??= new Anthropic({ apiKey, maxRetries: 4, logger, logLevel });
   return instance;
+}
+
+// At info and debug the SDK logs every request, the target's system prompt and its hidden objective
+// included. The MCP server stays at warn whatever ANTHROPIC_LOG says, since Claude Code keeps its stderr
+// in logs that the auditor could read while the objective is sealed.
+export function capLogLevel() {
+  logLevel = "warn";
+  instance = undefined;
 }
 
 // A key read from config.json. Without one, the SDK reads ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN itself.

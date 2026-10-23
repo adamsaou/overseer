@@ -1,12 +1,14 @@
+import { readFileSync, rmSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { runAudit } from "./lib/auditor.ts";
 import { describeError, isFatal } from "./lib/client.ts";
 import { missingKeyMessage, useApiKey } from "./lib/config.ts";
-import { estimateAudits, formatUsd, type Estimate } from "./lib/cost.ts";
+import { GRADE_USD, estimateAudits, formatUsd, type Estimate } from "./lib/cost.ts";
 import { GOALS, type Goal } from "./lib/goals.ts";
 import { grade, type GradeLabel } from "./lib/grader.ts";
+import { ownerAlive, processStart } from "./lib/live.ts";
 import { EFFORTS, MODELS, MODEL_KEYS, costOf, type Effort, type ModelKey } from "./lib/models.ts";
 import { displayPath, isMain, resultsDir } from "./lib/paths.ts";
 import { writeAtomic } from "./lib/store.ts";
@@ -37,8 +39,9 @@ type Row = {
 };
 type Job = { key: string; tools: Mode; auditor: ModelKey; target: ModelKey; goal: Goal; rep: number };
 type Log = (message: string, level?: "info" | "warn") => void;
-// What a run got through. stop is the error that ended it early, when there was one.
-type Tally = { audits: number; failed: number; skipped: number; regrades: number; regradesFailed: number; stop?: unknown };
+// What a run got through. stop is the error that ended it early, when there was one, and cancelled says
+// it was the signal.
+type Tally = { audits: number; failed: number; skipped: number; regrades: number; regradesFailed: number; stop?: unknown; cancelled?: boolean };
 
 export type StudyOptions = {
   auditors: ModelKey[];
@@ -58,6 +61,8 @@ export type StudyContext = {
   log?: Log;
   // Asked once the plan and its estimated cost are known, before anything is spent. False cancels.
   confirm?: (plan: { audits: number; regrades: number; estimate: Estimate }) => boolean | Promise<boolean>;
+  // Aborting it cancels the audits in progress and starts no more; finished ones are kept.
+  signal?: AbortSignal;
 };
 
 const MODES: Mode[] = ["basic", "entropy"];
@@ -115,44 +120,127 @@ function pickGoals(value: string): Goal[] {
   return GOALS.filter((g) => ids.includes(g.id));
 }
 
-// Returns the summary and how many audits or gradings failed or never started, or null when confirm
-// cancelled the run.
-export async function runStudy(args: string[] | StudyOptions, { home, log = () => {}, confirm }: StudyContext) {
-  const options = Array.isArray(args) ? parseStudyArgs(args) : args;
-  const dir = resultsDir(home);
-  const file = path.join(dir, "study.jsonl");
+// What the study already holds and what this plan would add, without running or writing anything.
+export async function planStudy(options: StudyOptions, home: string) {
+  const file = path.join(resultsDir(home), "study.jsonl");
   const text = await fs.readFile(file, "utf8").catch((err: NodeJS.ErrnoException) => {
     if (err.code === "ENOENT") return "";
     throw err;
   });
-  const rows = parseRows(text, file, log);
+  const rows = parseRows(text, file, () => {});
+  const { jobs, regrades, estimate } = plan(options, rows);
+  return { audits: jobs.length, regrades: regrades.length, estimate, finished: rows.length };
+}
 
-  let tally: Tally | null = null;
-  if (!options.summarize) {
-    await fs.mkdir(dir, { recursive: true, mode: 0o700 });
-    // A crash mid-append leaves a partial last line; start the next row on a line of its own.
-    if (text && !text.endsWith("\n")) await fs.appendFile(file, "\n");
-    tally = await run(options, rows, file, home, log, confirm);
-    if (!tally) return null;
-  }
-  const summary = summarize(rows, options);
-  const summaryFile = path.join(dir, "summary.json");
-  const shown = await shownSummary(home);
-  const other = shown && (shown.budget !== summary.budget || shown.effort !== summary.effort) ? shown : null;
-  print(summary, log);
-  if (other?.cells && !summary.cells.length) {
-    // The /study page shows one budget and effort. An empty summary for another would only blank it.
-    log(`${displayPath(summaryFile)} still shows budget ${other.budget}, effort ${other.effort}.`);
-  } else {
-    await fs.mkdir(dir, { recursive: true, mode: 0o700 });
-    await writeAtomic(summaryFile, JSON.stringify(summary, null, 2));
-    log(`\nWrote ${displayPath(summaryFile)}. Open /study in the app to see it.`);
-    if (other?.cells) {
-      log(`It showed budget ${other.budget}, effort ${other.effort} until now; overseer study --summarize --budget ${other.budget} --effort ${other.effort} switches it back.`);
+// The cost a confirm is asked to agree to: the audits, plus grading again the verdicts that went ungraded.
+export const studyUsd = ({ regrades, estimate }: { regrades: number; estimate: Estimate }) => estimate.usd + regrades * GRADE_USD;
+
+// The settings of the last study started, which overseer study --resume carries on with. They're kept as
+// flag strings, so a resumed study goes through the same checks.
+export const lastStudyFile = (home: string) => path.join(resultsDir(home), "last-study.json");
+
+export function studySettings(o: StudyOptions): Record<string, string> {
+  return {
+    auditors: o.auditors.join(","),
+    targets: o.targets.join(","),
+    tools: o.modes.join(","),
+    goals: o.goals.map((g) => g.id).join(","),
+    reps: String(o.reps),
+    budget: String(o.budget),
+    effort: o.effort,
+    concurrency: String(o.concurrency),
+  };
+}
+
+// Returns the summary and how many audits or gradings failed or never started, or null when confirm
+// cancelled the run. Throws when another study is running on the same data folder.
+export async function runStudy(args: string[] | StudyOptions, { home, log = () => {}, confirm, signal }: StudyContext) {
+  const options = Array.isArray(args) ? parseStudyArgs(args) : args;
+  const dir = resultsDir(home);
+  const file = path.join(dir, "study.jsonl");
+  // Taken before the rows are read, so the plan can't include audits another process is running.
+  const unlock = options.summarize ? () => {} : await lock(home);
+  try {
+    const text = await fs.readFile(file, "utf8").catch((err: NodeJS.ErrnoException) => {
+      if (err.code === "ENOENT") return "";
+      throw err;
+    });
+    const rows = parseRows(text, file, log);
+
+    let tally: Tally | null = null;
+    if (!options.summarize) {
+      // A crash mid-append leaves a partial last line; start the next row on a line of its own.
+      if (text && !text.endsWith("\n")) await fs.appendFile(file, "\n");
+      tally = await run(options, rows, file, home, log, confirm, signal);
+      if (!tally) return null;
     }
+    const summary = summarize(rows, options);
+    const summaryFile = path.join(dir, "summary.json");
+    const shown = await shownSummary(home);
+    const other = shown && (shown.budget !== summary.budget || shown.effort !== summary.effort) ? shown : null;
+    print(summary, log);
+    if (other?.cells && !summary.cells.length) {
+      // The /study page shows one budget and effort. An empty summary for another would only blank it.
+      log(`${displayPath(summaryFile)} still shows budget ${other.budget}, effort ${other.effort}.`);
+    } else {
+      await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+      await writeAtomic(summaryFile, JSON.stringify(summary, null, 2));
+      log(`\nWrote ${displayPath(summaryFile)}. Open /study in the app to see it.`);
+      if (other?.cells) {
+        log(`It showed budget ${other.budget}, effort ${other.effort} until now; overseer study --summarize --budget ${other.budget} --effort ${other.effort} switches it back.`);
+      }
+    }
+    if (tally) report(tally, log);
+    return { summary, failed: tally ? tally.failed + tally.skipped + tally.regradesFailed : 0 };
+  } finally {
+    unlock();
   }
-  if (tally) report(tally, log);
-  return { summary, failed: tally ? tally.failed + tally.skipped + tally.regradesFailed : 0 };
+}
+
+// One study at a time on a data folder, whichever process runs it: two would run the same audits, paying
+// for each twice and adding its row twice. The lock file names the process holding it, so a lock left
+// behind by a crash is taken over.
+const lockFile = (home: string) => path.join(resultsDir(home), "study.lock");
+
+type Holder = { pid: number; start?: string; since: number };
+
+// Why a study can't start now, when another process is running one on this data folder.
+export async function studyBusy(home: string): Promise<string | null> {
+  const holder = await fs.readFile(lockFile(home), "utf8").then((text) => JSON.parse(text) as Holder, () => null);
+  if (!holder || !ownerAlive(holder.pid, holder.start)) return null;
+  const since = Number.isFinite(holder.since) ? `, since ${new Date(holder.since).toLocaleString()}` : "";
+  return `Another study is running on ${displayPath(resultsDir(home))} (process ${holder.pid}${since}). Wait for it to finish, or stop it, then run this again.`;
+}
+
+async function lock(home: string) {
+  const file = lockFile(home);
+  const mine = JSON.stringify({ pid: process.pid, start: processStart(process.pid), since: Date.now() });
+  await fs.mkdir(resultsDir(home), { recursive: true, mode: 0o700 });
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await fs.writeFile(file, mine, { flag: "wx", mode: 0o600 });
+      break;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST" || attempt === 3) throw err;
+    }
+    const busy = await studyBusy(home);
+    if (busy) throw new Error(busy);
+    await fs.rm(file, { force: true });
+  }
+  // Synchronous, so it also runs on process.exit, as when Ctrl-C stops overseer study or Claude Code ends
+  // the MCP server.
+  const release = () => {
+    try {
+      if (readFileSync(file, "utf8") === mine) rmSync(file);
+    } catch {
+      // Already gone.
+    }
+  };
+  process.once("exit", release);
+  return () => {
+    process.off("exit", release);
+    release();
+  };
 }
 
 // The budget and effort of the summary the /study page shows now, and how many cells it has.
@@ -168,7 +256,7 @@ export async function shownSummary(home: string): Promise<{ budget: number; effo
 }
 
 // The last word on a run that didn't get through everything it set out to do.
-function report({ audits, failed, skipped, regrades, regradesFailed, stop }: Tally, log: Log) {
+function report({ audits, failed, skipped, regrades, regradesFailed, stop, cancelled }: Tally, log: Log) {
   const parts = [
     failed ? `${failed} of ${audits} ${audits === 1 ? "audit" : "audits"} failed` : "",
     skipped ? `${skipped} ${skipped === 1 ? "wasn't" : "weren't"} started` : "",
@@ -176,7 +264,7 @@ function report({ audits, failed, skipped, regrades, regradesFailed, stop }: Tal
   ].filter(Boolean);
   if (!parts.length) return;
   const sentence = parts.join(", and ");
-  const why = stop && skipped ? ` The study stopped early, because every audit would fail the same way: ${describeError(stop)}` : "";
+  const why = cancelled ? " The study was stopped." : stop && skipped ? ` The study stopped early, because every audit would fail the same way: ${describeError(stop)}` : "";
   log(`\n${sentence[0].toUpperCase()}${sentence.slice(1)}.${why} Finished audits are kept, so running the study again picks up the rest.`, "warn");
 }
 
@@ -198,8 +286,9 @@ function parseRows(text: string, file: string, log: Log): Row[] {
   return rows;
 }
 
-async function run(options: StudyOptions, rows: Row[], file: string, home: string, log: Log, confirm: StudyContext["confirm"]): Promise<Tally | null> {
-  const { auditors, targets, modes, goals, reps, budget, effort, concurrency } = options;
+// The audits still to run, the verdicts to grade again, and what the audits should cost.
+function plan(options: StudyOptions, rows: Row[]) {
+  const { auditors, targets, modes, goals, reps, budget, effort } = options;
   const done = new Set(rows.map((r) => r.key));
   const grid = new Set<string>();
   const jobs: Job[] = [];
@@ -215,8 +304,13 @@ async function run(options: StudyOptions, rows: Row[], file: string, home: strin
   // A row the grader failed on keeps its verdict, so it only needs grading again, not a new audit.
   const graded = new Set(rows.filter((r) => r.label !== "ungraded").map((r) => r.key));
   const regrades = rows.filter((r) => r.label === "ungraded" && grid.has(r.key) && !graded.has(r.key));
-
   const estimate = estimateAudits(jobs.map((j) => ({ auditor: j.auditor, target: j.target, budget, scans: j.tools === "entropy", effort })));
+  return { jobs, regrades, estimate };
+}
+
+async function run(options: StudyOptions, rows: Row[], file: string, home: string, log: Log, confirm: StudyContext["confirm"], signal?: AbortSignal): Promise<Tally | null> {
+  const { budget, effort, concurrency } = options;
+  const { jobs, regrades, estimate } = plan(options, rows);
   const regrading = regrades.length ? ` and ${regrades.length} to grade again` : "";
   log(`${jobs.length} ${jobs.length === 1 ? "audit" : "audits"} to run${regrading} (${rows.length} already in ${displayPath(file)}). Budget ${budget}, effort ${effort}, ${concurrency} at a time.`);
   const tally: Tally = { audits: jobs.length, failed: 0, skipped: 0, regrades: regrades.length, regradesFailed: 0 };
@@ -230,14 +324,23 @@ async function run(options: StudyOptions, rows: Row[], file: string, home: strin
   }
 
   // A rejected key, or a model this key can't use, would fail every audit the same way, so the first such
-  // error stops the study instead of letting it try all the rest.
-  const stop = (err: unknown) => {
-    if (tally.stop || !isFatal(err)) return;
+  // error stops the study instead of letting it try all the rest. So does the signal.
+  const halt = (err: unknown, why: string) => {
+    if (tally.stop) return;
     tally.stop = err;
-    if (jobs.length) log(`Not starting the remaining ${jobs.length} ${jobs.length === 1 ? "audit" : "audits"}: every one would fail the same way.`, "warn");
+    if (jobs.length) log(`Not starting the remaining ${jobs.length} ${jobs.length === 1 ? "audit" : "audits"}: ${why}.`, "warn");
     tally.skipped = jobs.length;
     jobs.length = 0;
   };
+  const stop = (err: unknown) => {
+    if (isFatal(err)) halt(err, "every one would fail the same way");
+  };
+  const cancel = () => {
+    halt(signal?.reason, "the study was stopped");
+    tally.cancelled = true;
+  };
+  if (signal?.aborted) cancel();
+  else signal?.addEventListener("abort", cancel, { once: true });
 
   const append = async (row: Row) => {
     rows.push(row);
@@ -249,7 +352,7 @@ async function run(options: StudyOptions, rows: Row[], file: string, home: strin
     const goal = GOALS.find((g) => g.id === row.goal);
     if (!goal) continue;
     try {
-      const g = await grade(goal.objective, row.verdict);
+      const g = await grade(goal.objective, row.verdict, signal);
       if (g.label === "ungraded") throw new Error(g.rationale);
       await append({ ...row, label: g.label, score: g.score, cost: Number((row.cost + costOf("opus", g.usage)).toFixed(4)), at: new Date().toISOString() });
       log(`Graded ${row.key} again: ${g.label}`);
@@ -274,6 +377,7 @@ async function run(options: StudyOptions, rows: Row[], file: string, home: strin
           effort,
           targetEffort: "low",
           entropyTool: job.tools === "entropy",
+          signal,
         });
         const row: Row = {
           key: job.key,

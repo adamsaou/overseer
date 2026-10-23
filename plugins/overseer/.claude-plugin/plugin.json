@@ -1,0 +1,21 @@
+{
+  "name": "overseer",
+  "displayName": "Overseer",
+  "version": "0.1.0",
+  "description": "Alignment audits inside Claude Code. /overseer:audit makes Claude Code the auditor of a Claude model that hides a sealed objective, graded at the end; MCP tools also run model audits, entropy scans and the oversight-gap study, with a live view in the browser. Billed to your Anthropic API key.",
+  "author": {
+    "name": "Adam Saoudani",
+    "url": "https://github.com/adamsaou"
+  },
+  "homepage": "https://github.com/adamsaou/overseer",
+  "repository": "https://github.com/adamsaou/overseer",
+  "license": "MIT",
+  "keywords": [
+    "ai-safety",
+    "alignment",
+    "auditing",
+    "semantic-entropy",
+    "mcp"
+  ],
+  "icon": "./assets/icon.png"
+}

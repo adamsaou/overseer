@@ -2,13 +2,15 @@ import type { Hypothesis, Verdict } from "./auditor.ts";
 import { describeError } from "./client.ts";
 import { formatScan, scanEntropy } from "./entropy.ts";
 import { grade, type Grade } from "./grader.ts";
+import type { LiveLog } from "./live.ts";
 import { costOf, emptyUsage, type ModelKey } from "./models.ts";
 import { newRunId, saveRun } from "./store.ts";
 import { Target } from "./target.ts";
 
 // An audit driven from outside (Claude Code, through the MCP server) instead of runAudit's own loop.
 // Target, reference, budget and grading work the same way, and events are recorded in the web UI's
-// replay format, so a Claude Code audit replays like any other run.
+// replay format, so a Claude Code audit replays like any other run. With a live log, every event is also
+// written to it as it happens, so the web UI can follow the audit.
 
 export type Outcome = {
   grade: Grade;
@@ -33,18 +35,26 @@ export class AuditSession {
   scans = 0;
   board: Hypothesis[] = [];
   verdict: Verdict | null = null;
+  // Set when the verdict was graded but the run couldn't be saved: the one way a verdict ends an audit
+  // without a run to replay.
+  saveError: string | null = null;
   started = Date.now();
   events: Record<string, unknown>[] = [];
   scanUsage = emptyUsage();
   model: Target;
   reference: Target | null;
+  live: LiveLog | null;
+  #grading = false;
+  #stopped: string | null = null;
 
-  constructor(target: ModelKey, objective: string, budget: number, scans: boolean, home: string) {
+  constructor(target: ModelKey, objective: string, budget: number, scans: boolean, home: string, live: LiveLog | null = null) {
     this.target = target;
     this.objective = objective;
     this.budget = budget;
     this.home = home;
-    this.id = newRunId("claude-code", target, this.started);
+    this.live = live;
+    if (live) this.started = live.started;
+    this.id = live?.id ?? newRunId("claude-code", target, this.started);
     this.model = new Target(target, objective, "low");
     this.reference = scans ? new Target(target, null, "low") : null;
     this.emit({ type: "start", auditor: "claude-code", target, budget, effort: "n/a", entropyTool: scans });
@@ -52,7 +62,9 @@ export class AuditSession {
   }
 
   emit(event: Record<string, unknown>) {
-    this.events.push({ ...event, t: Date.now() - this.started });
+    const entry = { ...event, t: Date.now() - this.started };
+    this.events.push(entry);
+    this.live?.write(entry);
   }
 
   // The server can't see Claude Code's reasoning; the one-line note sent with each call fills the
@@ -69,8 +81,17 @@ export class AuditSession {
     return this.budget - this.used;
   }
 
+  get grading() {
+    return this.#grading;
+  }
+
   #open() {
-    if (this.verdict) throw new Error("This audit is already over. Start a new one with begin_audit.");
+    if (this.verdict) {
+      const after = this.saveError ? "It was graded, but its run couldn't be saved." : "overseer_get_run shows its grade and replay link.";
+      throw new Error(`Audit ${this.id} is already over. ${after} overseer_begin_audit starts a new one.`);
+    }
+    if (this.#stopped) throw new Error(`Audit ${this.id} was stopped before its verdict, so it wasn't graded. overseer_begin_audit starts a new one.`);
+    if (this.#grading) throw new Error(`Audit ${this.id}'s verdict is being graded. Wait for final_verdict's result.`);
   }
 
   #spend(n: number) {
@@ -174,11 +195,23 @@ export class AuditSession {
   async finish(objective: string, confidence: number, evidence: string[]): Promise<Outcome> {
     this.#open();
     const verdict: Verdict = { objective: objective.trim(), confidence: clamp01(confidence), evidence: evidence.slice(0, 4), forced: false };
-    // Grade before closing the audit, so a failed grading call can simply be retried. A grader that
-    // declines or answers unreadably closes it as ungraded.
-    const result = await grade(this.objective, verdict.objective);
+    // Claimed before grading, so a second call can't grade the audit again, and closed only after it, so a
+    // failed grading call can simply be retried. A grader that declines or answers unreadably closes it as
+    // ungraded.
+    this.#grading = true;
+    let result: Grade;
+    try {
+      result = await grade(this.objective, verdict.objective);
+    } finally {
+      this.#grading = false;
+    }
     this.#open();
     this.verdict = verdict;
+    // An auditor that never updated the board still leaves its answer on it, for the live view and the replay.
+    if (!this.board.length) {
+      this.board = [{ text: verdict.objective, confidence: verdict.confidence }];
+      this.emit({ type: "board", hypotheses: this.board });
+    }
     this.emit({ type: "verdict", verdict });
     this.emit({ type: "grade", grade: result, objective: this.objective });
 
@@ -197,17 +230,35 @@ export class AuditSession {
     };
     this.emit({ type: "done", stats });
 
-    const runId = await saveRun(this.home, {
-      id: this.id,
-      objective: this.objective,
-      target: this.target,
-      auditor: "claude-code",
-      budget: this.budget,
-      effort: "n/a",
-      entropyTool: Boolean(this.reference),
-      result: { verdict, grade: result, board: this.board, stats },
-      events: this.events,
-    });
+    let runId: string;
+    try {
+      runId = await saveRun(this.home, {
+        id: this.id,
+        objective: this.objective,
+        target: this.target,
+        auditor: "claude-code",
+        budget: this.budget,
+        effort: "n/a",
+        entropyTool: Boolean(this.reference),
+        result: { verdict, grade: result, board: this.board, stats },
+        events: this.events,
+      });
+    } catch (err) {
+      this.saveError = `The audit was graded but couldn't be saved: ${describeError(err)}`;
+      this.live?.end("failed", [{ type: "error", message: this.saveError }]);
+      throw err;
+    }
+    // The saved run now holds every event, so the live log has done its job.
+    this.live?.end("done", [{ type: "saved", id: runId }]);
+    this.live?.remove();
     return { grade: result, objective: this.objective, runId, stats };
+  }
+
+  // For an audit that will never get its verdict, because it was stopped or the Claude Code session ended:
+  // it takes no more calls, and the web UI stops following it and shows why.
+  abandon(message: string) {
+    if (this.verdict || this.#stopped) return;
+    this.#stopped = message;
+    if (this.live?.open) this.live.end("failed", [{ type: "error", message }]);
   }
 }
