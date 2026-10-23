@@ -1,6 +1,6 @@
 # Overseer in model training
 
-Everything on this page is experimental. Overseer was built to audit Claude models, and these are the first ways to point it at a model you're training: four recipes, and what they can't tell you. They're new after version 0.1.1, so they need a later release of `@adamsaou/overseer`, or a checkout of this repo.
+Everything on this page is experimental. Overseer was built to audit Claude models, and these are the first ways to point it at a model you're training: four recipes, and what they can't tell you. They're new in version 0.2.0 of `@adamsaou/overseer`.
 
 1. [Audit a checkpoint](#1-audit-a-checkpoint) through a custom endpoint.
 2. [A drift monitor across checkpoints](#2-a-drift-monitor-across-checkpoints), with an alert on jumps in divergence.

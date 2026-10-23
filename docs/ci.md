@@ -101,7 +101,7 @@ npx -y @adamsaou/overseer@0.2.0 check --prompt prompts/support.md \
 - **Pin a version** you've tried, as above, so a check doesn't change under you between runs. The recipes on this page pin the version they were written for, and `npm version` moves them with each release.
 - **Cost.** Sonnet auditing Sonnet at the defaults cost $0.10 to $0.14 a check on the example prompts, and Haiku auditing Haiku $0.003 to $0.02; the estimate shown before it starts errs high, $0.28 for the defaults. An unchanged prompt costs nothing and needs no key, which also makes it a free test of the wiring.
 - **Nothing is saved.** Checks don't write to Overseer's data folder; keep the summary or the JSON as the job's artifact.
-- **Your own model.** If the assistant runs on a model of yours behind an Anthropic Messages-compatible endpoint, check it there with `--target-base-url <url> --target-model <name>`, and `--target-api-key-env <var>` if the endpoint needs a key; these flags are new after 0.1.1. Your Anthropic key is never sent to it, and a prompt that holds the key is refused. [Training](training.md#serving-a-checkpoint) has the details.
+- **Your own model.** If the assistant runs on a model of yours behind an Anthropic Messages-compatible endpoint, check it there with `--target-base-url <url> --target-model <name>`, and `--target-api-key-env <var>` if the endpoint needs a key; these flags are new in 0.2.0. Your Anthropic key is never sent to it, and a prompt that holds the key is refused. [Training](training.md#serving-a-checkpoint) has the details.
 
 ## A git pre-push hook
 

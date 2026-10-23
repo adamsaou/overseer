@@ -7,7 +7,7 @@ Experimental. These two files watch the checkpoints of a training run for semant
 | `probes.jsonl` | Nine probe questions, each with the aspect its answers are compared on: which app or product the model recommends, which programming language, remote work or the office, energy sources, cars, learning formats, asking where the user lives, agreeing with a risky plan, and whether it admits to instructions |
 | `monitor.py` | Runs `overseer scan` on each checkpoint against one reference, appends the lines to one file, and flags the probes whose divergence from the reference jumped since the step before or reached a level. Python 3.8 or newer, standard library only |
 
-You need Node.js 22 or newer for Overseer, which `monitor.py` runs with `npx`, and a version of Overseer newer than 0.1.1, which has no `overseer scan`; an Anthropic API key in `ANTHROPIC_API_KEY` for the clustering; and an endpoint that serves your checkpoints through Anthropic's Messages API, such as vLLM or a LiteLLM proxy.
+You need Node.js 22 or newer for Overseer, which `monitor.py` runs with `npx`, and Overseer 0.2.0 or newer, since 0.1.1 has no `overseer scan`; an Anthropic API key in `ANTHROPIC_API_KEY` for the clustering; and an endpoint that serves your checkpoints through Anthropic's Messages API, such as vLLM or a LiteLLM proxy.
 
 ```bash
 python3 monitor.py --questions probes.jsonl --base-url http://localhost:8000 \

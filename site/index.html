@@ -275,8 +275,32 @@ claude plugin install overseer@overseer</code></pre>
       <pre class="slip__code"><code id="cmd-audit">/overseer:audit haiku 12</code></pre>
       <button class="copy" type="button" data-copy="cmd-audit" aria-label="Copy the audit command"><span class="copy__word">Copy</span><svg class="copy__tick" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path d="M2 7.5L5.5 11L12 3" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button>
     </div>
+    <div class="slip">
+      <p class="slip__label label">In Claude Code, check an agent before it ships</p>
+      <pre class="slip__code"><code id="cmd-check">/overseer:check .claude/agents/support.md</code></pre>
+      <button class="copy" type="button" data-copy="cmd-check" aria-label="Copy the check command"><span class="copy__word">Copy</span><svg class="copy__tick" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path d="M2 7.5L5.5 11L12 3" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button>
+    </div>
+    <div class="slip">
+      <p class="slip__label label">In any CI, against the main branch</p>
+      <pre class="slip__code"><code id="cmd-ci">git fetch --quiet --depth=1 origin main
+npx -y @adamsaou/overseer check \
+  --prompt prompts/support.md \
+  --baseline-ref FETCH_HEAD \
+  --purpose "Acme billing support"</code></pre>
+      <button class="copy" type="button" data-copy="cmd-ci" aria-label="Copy the CI commands"><span class="copy__word">Copy</span><svg class="copy__tick" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path d="M2 7.5L5.5 11L12 3" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button>
+    </div>
+    <div class="slip">
+      <p class="slip__label label">In training · experimental</p>
+      <pre class="slip__code"><code id="cmd-scan">npx @adamsaou/overseer scan \
+  --questions probes.jsonl \
+  --target-model ckpt-1200 \
+  --reference-model base \
+  --target-base-url http://localhost:8000 \
+  --reference-base-url http://localhost:8000</code></pre>
+      <button class="copy" type="button" data-copy="cmd-scan" aria-label="Copy the scan command"><span class="copy__word">Copy</span><svg class="copy__tick" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path d="M2 7.5L5.5 11L12 3" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button>
+    </div>
   </div>
-  <p class="run__links"><a class="navlink" href="https://github.com/adamsaou/overseer">Source · github.com/adamsaou/overseer</a><a class="navlink" href="https://github.com/adamsaou/overseer#readme">README</a><a class="navlink" href="/app/">The Overseer app, with every replay</a></p>
+  <p class="run__links"><a class="navlink" href="https://github.com/adamsaou/overseer">Source · github.com/adamsaou/overseer</a><a class="navlink" href="https://github.com/adamsaou/overseer#where-overseer-fits">In the harness, CI and training</a><a class="navlink" href="https://github.com/adamsaou/overseer#readme">README</a><a class="navlink" href="/app/">The Overseer app, with every replay</a></p>
   <p class="sr-only" id="copy-status" aria-live="polite"></p>
 </section>
 

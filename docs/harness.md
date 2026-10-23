@@ -15,7 +15,7 @@ claude plugin install overseer@overseer
 
 You need Node.js 22 or newer, Claude Code 2.1.139 or newer for the hook (the first version that runs a hook's command without a shell; an older one reports a hook error after every edit), and an Anthropic API key, which the plugin's server reads from `ANTHROPIC_API_KEY` in the environment Claude Code starts in, or from `~/.overseer/config.json`: `npx @adamsaou/overseer doctor` offers to save one there. Checks are billed to that key.
 
-The plugin's MCP server is the npm package, at the version the plugin pins. `/overseer:check` needs a version whose server has the `overseer_check` tool, which 0.1.1 doesn't, so update an older install with `claude plugin marketplace update overseer` and `claude plugin update overseer@overseer`.
+The plugin's MCP server is the npm package, at the version the plugin pins. `/overseer:check` needs version 0.2.0 or newer, whose server has the `overseer_check` tool, so update an older install with `claude plugin marketplace update overseer` and `claude plugin update overseer@overseer`.
 
 ## Check a prompt: /overseer:check
 

@@ -39,7 +39,7 @@ npx @adamsaou/overseer scan --questions examples/training/probes.jsonl \
   --reference-base-url http://localhost:8000 --reference-model base --tag step=1200 --out scans.jsonl --yes
 ```
 
-The training side is new: its commands, the dataset format and the library may change in any 0.x release, and how well audits work on models other than Claude is untested. The auditor, the clustering and the grading always run on Claude, and your Anthropic API key is never sent to a custom endpoint. `/overseer:check` and its hook, `overseer scan`, `runs export --all`, the `--target-*` and `--reference-*` flags and the library are new after version 0.1.1, so they need a later release.
+The training side is new: its commands, the dataset format and the library may change in any 0.x release, and how well audits work on models other than Claude is untested. The auditor, the clustering and the grading always run on Claude, and your Anthropic API key is never sent to a custom endpoint. `/overseer:check` and its hook, `overseer scan`, `runs export --all`, the `--target-*` and `--reference-*` flags and the library are new in version 0.2.0.
 
 ## Install
 
@@ -298,9 +298,9 @@ PLAYWRIGHT_CORE=/tmp/stills/node_modules/playwright-core node scripts/render-sti
 `.github/workflows/release.yml` publishes to npm when a version tag is pushed, through npm's trusted publishing: GitHub proves to npm which repository and workflow is publishing, so no npm token is stored anywhere, and npm attaches provenance linking the package to the commit it was built from. It needs a one-time setup on npmjs.com: on the package's Settings tab, add a trusted publisher for GitHub Actions with the user `adamsaou`, the repository `overseer` and the workflow `release.yml`.
 
 ```bash
-npm version patch          # or minor: bumps package.json, the plugin and the version it pins, and tags v0.1.1
-git push origin v0.1.1     # the tag first: Actions checks it, builds and publishes 0.1.1
-git push                   # then main, once 0.1.1 is on npm
+npm version patch          # or minor: bumps package.json, the plugin and the version it pins, and tags v0.2.1
+git push origin v0.2.1     # the tag first: Actions checks it, builds and publishes 0.2.1
+git push                   # then main, once 0.2.1 is on npm
 ```
 
 Push the tag before `main`: plugin users install whatever `main` says, so a plugin version there before its package is on npm gets them a server that can't start.
