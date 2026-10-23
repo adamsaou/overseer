@@ -2,13 +2,13 @@
   "name": "overseer",
   "main": "worker.ts",
   "compatibility_date": "2026-10-01",
-  // Showcase only: the site, the app's saved replays and the study results. See worker.ts for why live
-  // audits stay local. The build bundles site/ into dist/ with the data as static JSON.
+  // The site, with the saved replays and the study results as static JSON: the build bundles site/ into
+  // dist/. The Worker only sends the retired web app's /app/ links to the site's replays.
   "build": { "command": "node scripts/build-site.ts" },
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
-    "run_worker_first": ["/api/*"],
+    "run_worker_first": ["/app", "/app/*"],
     "html_handling": "auto-trailing-slash",
     "not_found_handling": "404-page"
   }

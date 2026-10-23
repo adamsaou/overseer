@@ -6,10 +6,10 @@ import * as esbuild from "esbuild";
 import { GOALS } from "../lib/goals.ts";
 import { MODELS } from "../lib/models.ts";
 
-// Builds dist/ for the Cloudflare showcase. The site (site/) at the root, bundled with esbuild, every
-// number prerendered from the same JSON the app writes; the saved runs, study results and scans as
-// static JSON in /data/; the app itself at /app/ and the study page at /study. Wrangler runs this
-// before every deploy (see wrangler.jsonc), and `npm run preview` before serving dist/ locally.
+// Builds dist/ for the Cloudflare site. The site (site/) at the root, bundled with esbuild, every number
+// prerendered from the same JSON Overseer writes; the saved runs, study results and scans as static JSON
+// in /data/; and the study page at /study. Wrangler runs this before every deploy (see wrangler.jsonc),
+// and `npm run preview` before serving dist/ locally.
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SITE = path.join(ROOT, "site");
@@ -34,7 +34,7 @@ await fs.rm(DIST, { recursive: true, force: true });
 await fs.mkdir(path.join(DIST, "data", "runs"), { recursive: true });
 await fs.mkdir(path.join(DIST, "data", "scans"), { recursive: true });
 
-// Saved audits, newest first. runs.json keeps the fields the app's replay picker reads.
+// Saved audits, newest first. runs.json keeps the fields the site reads.
 const runs: Run[] = [];
 const metas = [];
 for (const file of await jsonFiles(path.join(ROOT, "runs"))) {
@@ -241,23 +241,6 @@ await fs.writeFile(
   }),
 );
 
-// The app moves to /app/, with its links fixed for its new home and a way back to the site; its own
-// study link leads to the site's study page.
-const patch = (html: string, file: string, edits: [string, string][]) =>
-  edits.reduce((out, [from, to]) => {
-    if (!out.includes(from)) throw new Error(`public/${file} changed: couldn't find ${JSON.stringify(from)} to fix for the hosted site.`);
-    return out.split(from).join(to);
-  }, html);
-await fs.mkdir(path.join(DIST, "app"), { recursive: true });
-await fs.writeFile(
-  path.join(DIST, "app", "index.html"),
-  patch(await read(path.join(ROOT, "public", "index.html")), "index.html", [
-    ["<title>Overseer</title>", '<title>Overseer</title>\n<link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png">\n<link rel="icon" href="/favicon-64.png" sizes="64x64" type="image/png">\n<link rel="apple-touch-icon" href="/apple-touch-icon.png">'],
-    ['<nav><a href="/" aria-current="page">Live audit</a>', '<nav><a href="/">Overview</a><a href="/app/" aria-current="page">Live audit</a>'],
-    ['<a class="btn" href="/">New audit</a>', '<a class="btn" href="/app/">New audit</a>'],
-    ["link.href = `/?replay=", "link.href = `/app/?replay="],
-  ]),
-);
 // Cache rules for Workers static assets: hashed files forever, data briefly, pages always revalidated.
 await fs.writeFile(
   path.join(DIST, "_headers"),
@@ -281,7 +264,7 @@ const kb = (n: number) => `${(n / 1024).toFixed(1)} KB`;
 const eager = boot[1].bytes + boot[1].imports.filter((i) => i.kind === "import-statement").reduce((s, i) => s + (result.metafile.outputs[i.path]?.bytes ?? 0), 0);
 console.log(
   `Built dist/: the site (boot ${kb(eager)} before the load event${exists(path.join(SITE, "js", "world", "index.js")) ? "" : ", world not built yet"}), ` +
-    `${runs.length} saved runs, ${scans.length} scan${scans.length === 1 ? "" : "s"}${summary ? ", study results" : ""}, the app at /app/ and /study.`,
+    `${runs.length} saved runs, ${scans.length} scan${scans.length === 1 ? "" : "s"}${summary ? ", study results" : ""} and the study page at /study.`,
 );
 if (process.env.SITE_SIZES) console.log(sizes);
 

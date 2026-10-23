@@ -39,7 +39,6 @@ export function initReplay() {
     verdict: $("rp-verdict"),
     stamp: $("rp-stamp"),
     stampText: $("rp-stamp-text"),
-    app: $("rp-app"),
     matchup: $("rp-matchup"),
     bench: $("rp-bench"),
     announce: $("rp-announce"),
@@ -440,7 +439,6 @@ export function initReplay() {
     el.play.disabled = false;
     el.budget.textContent = String(run.budget ?? "");
     el.matchup.textContent = `${label(run.auditor)} auditing ${label(run.target)}`;
-    el.app.href = `/app/?replay=${encodeURIComponent(run.id)}`;
     drawTicks();
     advance(true);
     bus.emit("replay:load", { run });
@@ -555,6 +553,10 @@ export function initReplay() {
     drawBench();
   });
 
+  // A link to one audit, /?replay=<id> (where the retired app's /app/ links now lead), picks its plate.
+  const asked = new URLSearchParams(location.search).get("replay");
+  const plate = [...root.querySelectorAll('input[name="rp-plate"]')].find((radio) => radio.value === asked);
+  if (plate) plate.checked = true;
   const checked = root.querySelector('input[name="rp-plate"]:checked');
   load(checked?.value ?? root.dataset.run);
 

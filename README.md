@@ -275,16 +275,16 @@ The plugin lives in `plugins/overseer/`, and `.claude-plugin/marketplace.json` i
 
 ## Website
 
-https://overseer.saoudani-adam.workers.dev is the project's site: the study told in seven scenes (the target, the auditor, entropy, the oversight gap, a replayed audit, how to run it, related work) over a three.js plate that draws the measurements. It's static files on a Cloudflare Worker on the free plan. The app is at `/app/`, where old `/?replay=<id>`, `?lens=` and `?live=` links now lead; `/study` lists every audit of the study, objective by objective, in the site's own type; and the read-only API the app uses is at `/api/*`. Live audits stay local, because one audit makes 50-80 API calls and a free Worker gets 50 per request.
+https://overseer.saoudani-adam.workers.dev is the project's site: the study told in seven scenes (the target, the auditor, entropy, the oversight gap, a replayed audit, how to run it, related work) over a three.js plate that draws the measurements. It's static files on a Cloudflare Worker on the free plan. `/study` lists every audit of the study, objective by objective, in the site's own type. The web app that used to be at `/app/` is retired: its links, and old `/?replay=<id>` ones, open that audit in the site's own replay, `?lens=` links lead to the worked example, and `?live=` ones to the front page.
 
-Every number on the site comes from the JSON the app writes: `results/summary.json` for the oversight-gap table and its intervals, `runs/*.json` for the replays, and `results/scans/*.json` for the worked example. `site/config.json` picks the featured replay, the other plates and the scan. After a new study or new runs, rebuild and redeploy:
+Every number on the site comes from the JSON Overseer writes: `results/summary.json` for the oversight-gap table and its intervals, `runs/*.json` for the replays, and `results/scans/*.json` for the worked example. `site/config.json` picks the featured replay, the other plates and the scan. After a new study or new runs, rebuild and redeploy:
 
 ```bash
 npm run preview    # build dist/ and serve it at http://127.0.0.1:8787 the way the Worker does (PORT to change it)
 npm run deploy     # build and deploy with Wrangler
 ```
 
-`scripts/build-site.ts` builds `dist/`. It bundles `site/` with esbuild, prerenders the numbers and figures into the page, copies the data into `/data/`, and puts the app at `/app/`. three.js loads after the page, and only with WebGL 2 on a GPU; without it the page shows stills of the same plates and still works in full. With reduced motion, or with the MOTION switch off, the world holds each scene as one composed still.
+`scripts/build-site.ts` builds `dist/`. It bundles `site/` with esbuild, prerenders the numbers and figures into the page, and copies the data into `/data/`. three.js loads after the page, and only with WebGL 2 on a GPU; without it the page shows stills of the same plates and still works in full. With reduced motion, or with the MOTION switch off, the world holds each scene as one composed still.
 
 The stills are rendered from the world itself: the hero's two posters (the plate's first state, which the world takes over from with motion on, and the settled plate), the target and auditor scenes, the worked example's two blink exposures (the SVG plate draws the contours and answers over them, from the same geometry the world uses), and `og.png` for link previews, with `site/img/anchors.json` for where their labels go and what data they were drawn from: a build after a new scan or featured run uses the SVG figures until the stills are rendered again. After changing the world or the data it draws, render them again (it needs a GPU, `avifenc` and ImageMagick, and Playwright, which isn't a dependency), then rebuild:
 
@@ -340,7 +340,7 @@ The auditor, clustering and grading calls on Opus 5.5 and Sonnet 5.5 opt into se
 | `install.sh` | The curl-pipe installer |
 | `site/`, `scripts/build-site.ts`, `scripts/preview-site.ts` | The website, its build into `dist/`, and a local preview of `dist/` |
 | `scripts/render-stills.mjs` | Renders the website's stills and link-preview image from its three.js world |
-| `worker.ts`, `wrangler.jsonc` | The Cloudflare Worker that serves the website and the app's read-only API |
+| `worker.ts`, `wrangler.jsonc` | The Cloudflare Worker that serves the website |
 | `brand/` | The painted mark, the wordmark, icons, the README header and the social preview, with the script that makes them ([BRAND.md](brand/BRAND.md)) |
 
 ## Next step: white-box probes

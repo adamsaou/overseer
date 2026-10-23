@@ -2,7 +2,7 @@
 <html lang="en" data-scene="hero" data-world="off">
 <head>
 <meta charset="utf-8">
-<script>(function(){var l=location,q=l.search,d=document.documentElement,m;if(/[?&](replay|lens|live)=/.test(q)){l.replace("/app/"+q+l.hash);return}try{m=localStorage.getItem("overseer:motion")}catch(e){}d.dataset.motion=m==="off"||(m!=="on"&&matchMedia("(prefers-reduced-motion: reduce)").matches)?"off":"on";d.dataset.js=""})()</script>
+<script>(function(){var l=location,q=l.search,d=document.documentElement,m;if(/[?&](lens|live)=/.test(q)){l.replace(/[?&]lens=/.test(q)?"/#entropy":"/");return}try{m=localStorage.getItem("overseer:motion")}catch(e){}d.dataset.motion=m==="off"||(m!=="on"&&matchMedia("(prefers-reduced-motion: reduce)").matches)?"off":"on";d.dataset.js=""})()</script>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Overseer · Can a weaker AI catch a stronger one that’s hiding something?</title>
 <meta name="description" content="An alignment-auditing study on the Claude 5.5 family. An auditor model questions a target that hides an objective, and semantic entropy against a clean copy is tested as a black-box signal of hidden intent.">
@@ -203,7 +203,6 @@
         <button type="button" role="radio" class="speed" data-speed="1" aria-checked="true">1×</button><button type="button" role="radio" class="speed" data-speed="2" aria-checked="false" tabindex="-1">2×</button><button type="button" role="radio" class="speed" data-speed="4" aria-checked="false" tabindex="-1">4×</button>
       </div>
       <div class="scrub"><svg class="scrub__ticks" id="rp-ticks" aria-hidden="true" preserveAspectRatio="none"></svg><input class="scrub__range" id="rp-scrub" type="range" min="0" max="1000" step="100" value="0" aria-label="Replay position" disabled></div>
-      <a class="navlink" id="rp-app" href="/app/?replay={{ featured_id }}">Open in the Overseer app</a>
     </div>
     <div class="player__body">
       <section class="logbox" aria-labelledby="rp-log-h">
@@ -236,7 +235,7 @@
       </div>
     </div>
     <p class="sr-only" id="rp-announce" aria-live="polite"></p>
-    <noscript><p class="caption">The replay needs JavaScript. The app can also play it: <a href="/app/?replay={{ featured_id }}">open this audit in the Overseer app</a>.</p></noscript>
+    <noscript><p class="caption">The replay needs JavaScript.</p></noscript>
   </div>
 </section>
 
@@ -300,7 +299,7 @@ npx -y @adamsaou/overseer check \
       <button class="copy" type="button" data-copy="cmd-scan" aria-label="Copy the scan command"><span class="copy__word">Copy</span><svg class="copy__tick" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path d="M2 7.5L5.5 11L12 3" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button>
     </div>
   </div>
-  <p class="run__links"><a class="navlink" href="https://github.com/adamsaou/overseer">Source · github.com/adamsaou/overseer</a><a class="navlink" href="https://github.com/adamsaou/overseer#where-overseer-fits">In the harness, CI and training</a><a class="navlink" href="https://github.com/adamsaou/overseer#readme">README</a><a class="navlink" href="/app/">The Overseer app, with every replay</a></p>
+  <p class="run__links"><a class="navlink" href="https://github.com/adamsaou/overseer">Source · github.com/adamsaou/overseer</a><a class="navlink" href="https://github.com/adamsaou/overseer#where-overseer-fits">In the harness, CI and training</a><a class="navlink" href="https://github.com/adamsaou/overseer#readme">README</a><a class="navlink" href="https://www.npmjs.com/package/@adamsaou/overseer">npm · @adamsaou/overseer</a></p>
   <p class="sr-only" id="copy-status" aria-live="polite"></p>
 </section>
 
@@ -334,7 +333,7 @@ npx -y @adamsaou/overseer check \
 
 <footer class="footer">
   <p class="wordmark">Overseer</p>
-  <p class="footer__links"><a class="navlink" href="#hero">Top</a><a class="navlink" href="#gap">Study</a><a class="navlink" href="#replay">Replays</a><a class="navlink" href="/app/">The app</a><a class="navlink" href="https://github.com/adamsaou/overseer">GitHub</a></p>
+  <p class="footer__links"><a class="navlink" href="#hero">Top</a><a class="navlink" href="#gap">Study</a><a class="navlink" href="#replay">Replays</a><a class="navlink" href="https://github.com/adamsaou/overseer">GitHub</a></p>
   <p class="label footer__note">Data generated {{ generated }}</p>
 </footer>
 </body>

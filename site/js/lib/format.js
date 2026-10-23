@@ -1,12 +1,12 @@
 // Formatting and small statistics shared by the page (replay, readouts) and by scripts/build-site.ts,
-// which prerenders every number on the page from the same JSON the app writes.
+// which prerenders every number on the page from the same JSON Overseer writes.
 
 export const LN2 = Math.log(2);
 
 const ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 export const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ESCAPES[c]);
 
-// Model labels for keys the app knows; Claude Code audits through the MCP server under its own name.
+// Model labels for the keys Overseer knows; Claude Code audits through the MCP server under its own name.
 export function modelLabel(key, labels = {}) {
   if (key === "claude-code") return "Claude Code";
   return labels[key] ?? key;

@@ -7,7 +7,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 // Serves dist/ the way Workers static assets do with this project's wrangler.jsonc: HTML handling
 // "auto-trailing-slash", the 404 page for anything missing, _headers, ETags and edge-style
-// compression, with /api/* run through worker.ts's fetch first. `npm run preview` builds, then runs this.
+// compression, with /app and /app/* run through worker.ts's fetch first. `npm run preview` builds, then
+// runs this.
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DIST = path.join(ROOT, "dist");
@@ -126,7 +127,7 @@ const server = http.createServer(async (req, res) => {
       body: hasBody ? (req as unknown as ReadableStream) : undefined,
       ...(hasBody ? { duplex: "half" } : {}),
     } as RequestInit);
-    const response = new URL(url).pathname.startsWith("/api/") ? await worker.fetch(request, env) : await assets(request);
+    const response = /^\/app(\/|$)/.test(new URL(url).pathname) ? await worker.fetch(request, env) : await assets(request);
     res.writeHead(response.status, Object.fromEntries(response.headers));
     res.end(response.body ? Buffer.from(await response.arrayBuffer()) : undefined);
   } catch (err) {

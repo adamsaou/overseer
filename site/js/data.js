@@ -1,4 +1,4 @@
-// The JSON the app writes, as the build copied it into /data/. The page's own config (featured
+// The JSON Overseer writes, as the build copied it into /data/. The page's own config (featured
 // replay, plates, worked-example scan) is inlined by the build; ids that no longer exist fall back to
 // the newest caught run and the newest scan.
 const cache = new Map();
