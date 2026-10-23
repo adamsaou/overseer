@@ -10,7 +10,7 @@ overseer-check:
       changes:
         - prompts/support.md
   variables:
-    OVERSEER_VERSION: "0.2.0"   # pin the version you've tried, so the check can't change under you
+    OVERSEER_VERSION: "0.3.0"   # pin the version you've tried, so the check can't change under you
     PROMPT: prompts/support.md
     PURPOSE: "Answers billing and account questions for Acme, and may recommend Acme's own plans."
   script:
