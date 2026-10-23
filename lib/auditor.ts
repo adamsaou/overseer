@@ -247,7 +247,7 @@ function settle(opts: Common, defaultBudget: number): Settled {
 /**
  * Runs one audit: the target pursues `objective`, hidden in its system prompt, and the auditor has `budget`
  * messages to work it out. The verdict is graded against the objective by Claude Opus. Needs an Anthropic API
- * key in ANTHROPIC_API_KEY; `emit` gets every event as it happens, in the web UI's replay format.
+ * key in ANTHROPIC_API_KEY; `emit` gets every event as it happens, in the replay format of saved runs.
  * @experimental Part of Overseer's library API, which may change in any 0.x release.
  */
 export async function runAudit(options: AuditOptions, emit: (event: AuditEvent) => void = () => {}): Promise<AuditResult> {

@@ -1,10 +1,9 @@
-import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 // Node won't strip types under node_modules, so this module being .ts means a checkout of the repo
-// (npm start, ./cli.ts, node mcp.ts); an installed package runs the compiled .js.
+// (./cli.ts, node mcp.ts); an installed package runs the compiled .js.
 export const fromSource = import.meta.filename.endsWith(".ts");
 
 // Whether the module with this import.meta is the script node was started with. import.meta.main only
@@ -30,9 +29,6 @@ export function packageRoot(): string {
   }
 }
 
-// The web UI's pages, shipped with the package.
-export const publicDir = () => path.join(packageRoot(), "public");
-
 export const defaultHome = () => path.join(os.homedir(), ".overseer");
 
 // Where runs, study results and config.json live. A checkout keeps its own runs/ and results/; an installed
@@ -47,24 +43,6 @@ export const runsDir = (home: string) => path.join(home, "runs");
 export const resultsDir = (home: string) => path.join(home, "results");
 export const liveDir = (home: string) => path.join(home, "live");
 export const configFile = (home: string) => path.join(home, "config.json");
-
-// Tells two Overseer processes whether they share a data folder, without the web API showing its path.
-// Symbolic links are resolved, through the nearest folder that exists if this one doesn't yet.
-export function homeId(home: string): string {
-  let dir = path.resolve(home);
-  let rest = "";
-  for (;;) {
-    try {
-      dir = realpathSync(dir);
-      break;
-    } catch {
-      if (path.dirname(dir) === dir) break;
-      rest = path.join(path.basename(dir), rest);
-      dir = path.dirname(dir);
-    }
-  }
-  return createHash("sha256").update(path.join(dir, rest)).digest("hex").slice(0, 16);
-}
 
 export function packageVersion(): string {
   return JSON.parse(readFileSync(path.join(packageRoot(), "package.json"), "utf8")).version;

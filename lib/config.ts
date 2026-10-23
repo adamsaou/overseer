@@ -129,7 +129,7 @@ export function missingKeyMessage(home: string) {
   return `No Anthropic API key found. Set ANTHROPIC_API_KEY${dotEnv}, or save {"apiKey": "..."} in ${configFile(home)}.`;
 }
 
-// A checkout of the repo also reads its git-ignored .env, as npm start always has. Variables already set win.
+// A checkout of the repo also reads its git-ignored .env. Variables already set win.
 export function loadDotEnv() {
   if (!fromSource) return;
   try {

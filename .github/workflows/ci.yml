@@ -41,7 +41,10 @@ jobs:
           expect() { local want=$1; shift; set +e; "$@" > /dev/null 2>&1; local got=$?; set -e; [[ $got == "$want" ]] || { echo "::error::$* exited $got, expected $want"; exit 1; }; }
           overseer --version
           overseer --help > /dev/null
-          for c in ui audit check study scan runs presets doctor mcp; do overseer "$c" --help > /dev/null; done
+          overseer > /dev/null
+          for c in audit check study scan runs presets doctor mcp; do overseer "$c" --help > /dev/null; done
+          # The web app is gone: overseer ui says so instead of starting a server.
+          expect 2 overseer ui
           overseer presets > /dev/null
           expect 2 overseer bogus
           expect 2 overseer check --purpose "x"

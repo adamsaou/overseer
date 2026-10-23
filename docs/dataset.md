@@ -10,11 +10,11 @@ npx @adamsaou/overseer runs export --all --format json > audits.json  # or one J
 - Records come oldest first. Run ids start with the time the audit started, so a later export of the same folder adds its new records at the end.
 - Unfinished runs, which have no verdict, and unreadable files are left out, with a note on stderr for each kind that names them.
 - Records hold no API keys, because saved runs never do, and a custom endpoint is named by its model, host and path only. They do hold everything the target said.
-- `runs export <id>` still writes one run as it's saved on disk, in the web app's replay format, which these records are built from.
+- `runs export <id>` still writes one run as it's saved on disk, in the replay format, which these records are built from.
 
 ## Which audits are in it
 
-Every audit saved in the data folder's `runs/`: those run with `overseer audit`, in the web app, and through the MCP server, including Claude Code's own audits (auditor `claude-code`). The data folder is `~/.overseer`, or `OVERSEER_HOME`, or a checkout's own folder.
+Every audit saved in the data folder's `runs/`: those run with `overseer audit` and through the MCP server (and in the web app, before 0.3.0), including Claude Code's own audits (auditor `claude-code`). The data folder is `~/.overseer`, or `OVERSEER_HOME`, or a checkout's own folder.
 
 The study's audits aren't in it. `overseer study` keeps one row of scores per audit in `results/study.jsonl`, without the conversations, so there's no trajectory to export. To build a dataset, run audits with `overseer audit`, which saves each one:
 

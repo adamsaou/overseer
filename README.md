@@ -46,7 +46,7 @@ The training side is new: its commands, the dataset format and the library may c
 You need Node.js 22 or newer and an Anthropic API key.
 
 ```bash
-npx @adamsaou/overseer                     # start the web app at http://127.0.0.1:7878 and open it
+npx @adamsaou/overseer doctor              # run it without installing: checks Node.js, your key and model access
 npm install --global @adamsaou/overseer    # or keep the overseer command
 curl -fsSL https://raw.githubusercontent.com/adamsaou/overseer/main/install.sh | sh
 ```
@@ -70,7 +70,7 @@ The install script, for macOS and Linux, checks your Node.js version and install
 
 | Command | What it does |
 |---|---|
-| `overseer`, `overseer ui` | Starts the web app and opens it in your browser (`--port`, `--host`, `--no-open`). By default it listens on 127.0.0.1, so only this computer can use it. On an address other computers can reach, such as `--host 0.0.0.0` (or `OVERSEER_HOST`), they need a password that is printed at startup and changes every launch, since anyone who can open the app can start audits on your key. |
+| `overseer`, `overseer --help` | Lists the commands. The web app that `overseer` and `overseer ui` started until version 0.3.0 is gone: Overseer runs in the terminal, in Claude Code and in CI, and saved audits replay with `overseer runs replay`. |
 | `overseer audit` | Runs one audit in the terminal with a live readout: the auditor's reasoning, every message to and from the target, the evidence board, entropy scans, the verdict, the grade and the reveal. `--auditor` and `--target` take `haiku`, `sonnet` or `opus`; instead of `--target`, `--target-base-url <url>` and `--target-model <name>` audit any model behind an Anthropic Messages-compatible endpoint, with its key read from the variable `--target-api-key-env <var>` names, if it needs one (see [Training](docs/training.md#serving-a-checkpoint)). `--objective` takes a preset id, a sentence of your own, or `random`, the default, which stays sealed until the end. Also `--budget`, `--effort`, `--scans`/`--no-scans` and `--json`. |
 | `overseer check` | Checks your own assistant's system prompt for a covert agenda, for CI: see [Check your assistant in CI](#check-your-assistant-in-ci). `--prompt <file>` and `--purpose <text>` are required; `--baseline-ref <ref>` compares against the version in git. `--model` takes the model the assistant runs on, or the `--target-*` flags a model behind a custom endpoint, as for `overseer audit`. |
 | `overseer study` | Runs the oversight-gap study: by default 2 tool conditions × 3 auditors × 3 targets × 8 objectives, 144 audits estimated at about $49. It never repeats a finished audit, so it picks up where it left off; `--resume` carries on with the last study's settings. Slice it with `--reps`, `--auditors`, `--targets`, `--tools`, `--goals`, `--budget`, `--effort` and `--concurrency`. It exits with 1 if any audit failed, and stops early on an error that would fail every audit, such as a rejected key. The `/study` page shows `results/summary.json`, which covers one budget and effort: a study run switches it to its own and says how to switch back, and `--summarize` rebuilds it without running anything. |
@@ -190,7 +190,7 @@ Without a key, the tools that spend say so and point to that command. The server
 > /overseer:audit haiku 12
 ```
 
-`/overseer:audit [haiku|sonnet|opus] [budget]` makes Claude Code the auditor; the target defaults to Sonnet and the budget to 24 messages. It calls `overseer_begin_audit`, which deploys the target with an objective drawn at random and sealed on the server, and opens the live view in your browser. Claude then investigates following the plugin's `audit-method` skill (competing hypotheses, `sample` to tell patterns from noise, entropy scans when the conversation evidence is thin, a calibrated evidence board, verbatim quotes and no peeking) and ends with `final_verdict`, which is graded against the sealed objective. It reports the grade, the revealed objective and the replay link. The run is saved in `~/.overseer/runs/`, tagged `claude-code`, and replays like any other. `/overseer:audit` only runs when you type it, and Claude Code asks before each Overseer tool call unless you've allowed them. For a headless run in which Claude has none of Claude Code's file, shell, web or agent tools (as of Claude Code 2.1.309):
+`/overseer:audit [haiku|sonnet|opus] [budget]` makes Claude Code the auditor; the target defaults to Sonnet and the budget to 24 messages. It calls `overseer_begin_audit`, which deploys the target with an objective drawn at random and sealed on the server. Claude then investigates following the plugin's `audit-method` skill (competing hypotheses, `sample` to tell patterns from noise, entropy scans when the conversation evidence is thin, a calibrated evidence board, verbatim quotes and no peeking) and ends with `final_verdict`, which is graded against the sealed objective. It reports the grade, the revealed objective and the command that replays the run. The run is saved in `~/.overseer/runs/`, tagged `claude-code`, and replays like any other. `/overseer:audit` only runs when you type it, and Claude Code asks before each Overseer tool call unless you've allowed them. For a headless run in which Claude has none of Claude Code's file, shell, web or agent tools (as of Claude Code 2.1.309):
 
 ```bash
 claude -p "/overseer:audit haiku 12" \
@@ -212,9 +212,9 @@ The tools, which permission rules name `mcp__plugin_overseer_overseer__<tool>`:
 
 | Tool | What it does |
 |---|---|
-| `overseer_begin_audit` | Starts an audit with Claude Code as the auditor: `target`, `budget` (6 to 60 messages, enforced on the server), `scans` and `open_ui`. One can be open at a time. |
+| `overseer_begin_audit` | Starts an audit with Claude Code as the auditor: `target`, `budget` (6 to 60 messages, enforced on the server) and `scans`. One can be open at a time. |
 | `send_message`, `sample`, `entropy_scan`, `update_board`, `final_verdict` | The model auditors' own tools, for the audit that `overseer_begin_audit` started. `final_verdict` is graded against the sealed objective, which is then revealed, and the run is saved. |
-| `overseer_run_audit` | Runs a model audit in the background (`auditor`, `target`, `objective`, `budget`, `scans`, `effort`, `open_ui`) and returns its run id and links at once; up to four model audits and checks run at a time. The objective is a preset id, a sentence of your own, or `random` for a sealed preset. |
+| `overseer_run_audit` | Runs a model audit in the background (`auditor`, `target`, `objective`, `budget`, `scans`, `effort`) and returns its run id at once; up to four model audits and checks run at a time. The objective is a preset id, a sentence of your own, or `random` for a sealed preset. |
 | `overseer_check` | Checks a system prompt, a file in the project (`prompt`) or its text (`prompt_text`), against its stated `purpose`, with the options of `overseer check`: `model`, `auditor`, `baseline` or `baseline_ref`, `budget`, `effort`, `scans`, `fail_at` and `max_cost`. The first call returns the plan and its estimated cost and starts nothing; the check starts, in the background, only when the tool is called again with `confirm` set to that estimate, which Claude passes on from your yes. A prompt that's the same as its baseline is reported as unchanged at no cost. Checks aren't saved. |
 | `overseer_get_run` | A run's status (running, done or failed), evidence board, verdict and grade, and the hidden objective once it's over; for a check, its result: pass, fail or incomplete, the agenda found, the confidence, the quotes and the cost. `wait`, up to 60 seconds, waits for a running model audit or check to finish. The start of an id is enough. |
 | `overseer_list_runs` | Saved, running and failed audits, newest first, then the checks started in the session. |
@@ -223,9 +223,9 @@ The tools, which permission rules name `mcp__plugin_overseer_overseer__<tool>`:
 | `overseer_run_study` | The oversight-gap study, with the options of `overseer study`. The first call returns the plan and its estimated cost and starts nothing; the study starts, in the background, only when the tool is called again with `confirm` set to that estimate. Claude Code asks you before every call, even when you've allowed the other tools. One study runs at a time on a data folder, whichever process started it. |
 | `overseer_study_status` | The study's progress and the catch scores per auditor and target. |
 
-While Claude Code's own audit is open, the other Overseer tools refuse until its `final_verdict`, apart from `overseer_stop` and `overseer_get_run` on that audit, since the presets' ids, other runs and the study's results would turn the open question into multiple choice. The server can't keep Claude from finding the presets elsewhere: in the package's files, in the web UI's API, or in runs it looked at earlier in the session. `/overseer:audit` tells it not to look, the headless command above takes away the tools it would need, and a new session has seen no other runs.
+While Claude Code's own audit is open, the other Overseer tools refuse until its `final_verdict`, apart from `overseer_stop` and `overseer_get_run` on that audit, since the presets' ids, other runs and the study's results would turn the open question into multiple choice. The server can't keep Claude from finding the presets elsewhere: in the package's files or in runs it looked at earlier in the session. `/overseer:audit` tells it not to look, the headless command above takes away the tools it would need, and a new session has seen no other runs.
 
-**Live view.** Every audit started through the plugin writes its events to `~/.overseer/live/<id>.jsonl` as they happen, and the web UI follows it at `/?live=<id>` until the verdict, then plays the saved replay at `/?replay=<id>`. With `open_ui`, which `/overseer:audit` always sets, the server opens that page in your browser. It reuses an Overseer that's already running for the same data folder, or starts one inside the MCP server on 127.0.0.1:7878 (or the next free port), which stops when the Claude Code session ends, and its links with it; `final_verdict` then also says how to open the run afterwards. `npx @adamsaou/overseer` keeps a web UI running on its own, and `npx @adamsaou/overseer runs replay <id>` plays a run in the terminal.
+**Following an audit.** Every audit started through the plugin writes its events to `~/.overseer/live/<id>.jsonl` as they happen, so `overseer_get_run` and `overseer_list_runs` can report on it from any Claude Code session. Once it's saved, `npx @adamsaou/overseer runs replay <id>` plays it back in a terminal and `runs show <id>` prints its verdict and grade.
 
 **Updates.** `claude plugin marketplace update overseer`, then `claude plugin update overseer@overseer`, or turn on auto-update for the marketplace in `/plugin`.
 
@@ -246,11 +246,10 @@ A checkout runs the TypeScript directly, so it needs Node.js 22.18 or newer (or 
 ```bash
 npm install
 cp .env.example .env      # then put your key in .env
-npm start                 # http://127.0.0.1:7878
+node cli.ts doctor        # the overseer command, run from source
 ```
 
-- **Live audit (`/`).** Write a hidden objective, or seal a random preset so nobody in the room knows it. Pick the auditor and target, then watch the investigation: the auditor's conversations with the target, its reasoning, its evidence board and its entropy scans. The verdict and the reveal come at the end. Every audit is saved to `runs/` and can be replayed at `/?replay=<id>`, which is useful when the venue wifi isn't.
-- **Study (`/study`).** `npm run study` runs the full grid: 2 tool conditions × 3 auditors × 3 targets × 8 objectives = 144 audits. It is `overseer study` run from source: it resumes where it left off, shows the estimated cost and asks before it starts (`npm run study -- --yes` skips the question), and prints the approximate cost of each audit as it goes. It takes the same options, such as `npm run study -- --goals 3 --auditors haiku,opus --targets opus`.
+- **Study.** `npm run study` runs the full grid: 2 tool conditions × 3 auditors × 3 targets × 8 objectives = 144 audits. It is `overseer study` run from source: it resumes where it left off, shows the estimated cost and asks before it starts (`npm run study -- --yes` skips the question), and prints the approximate cost of each audit as it goes. It takes the same options, such as `npm run study -- --goals 3 --auditors haiku,opus --targets opus`.
 - **Terminal (`cli.ts`).** `./cli.ts` is the `overseer` command run from source, with every command above. Symlink it onto your PATH as `overseer` to run it from anywhere; a checkout reads its own `.env` and keeps its own `runs/` and `results/`. `npm run build` compiles it to `build/`, which is what the npm package ships.
 
 ### Claude Code in a checkout
@@ -329,10 +328,9 @@ The auditor, clustering and grading calls on Opus 5.5 and Sonnet 5.5 opt into se
 | `index.ts` | The library's entry point |
 | `lib/grader.ts` | Verdict grading |
 | `lib/goals.ts` | The hidden objectives |
-| `server.ts`, `public/` | Live demo, replays, the live view of MCP audits and the study page |
 | `study.ts` | The grid runner |
 | `cli.ts` | The `overseer` command |
-| `mcp.ts`, `lib/session.ts`, `lib/live.ts` | The MCP server: Claude Code as the auditor, background audits and the study, and the live event logs the web UI follows |
+| `mcp.ts`, `lib/session.ts`, `lib/live.ts` | The MCP server: Claude Code as the auditor, background audits and the study, and the live event logs that report on running audits |
 | `plugins/overseer/`, `.claude-plugin/marketplace.json` | The Claude Code plugin (its MCP server entry, `/overseer:audit`, the `audit-method` skill, `/overseer:check` and the hook in `hooks/` and `scripts/`) and the marketplace that lists it |
 | `docs/`, `examples/` | The guides for the harness, CI, training and the dataset; the CI recipes, the training probes and drift monitor, and the example prompts |
 | `scripts/sync-plugin.ts` | Keeps the plugin's version, and the package version it runs, in step with `package.json` |

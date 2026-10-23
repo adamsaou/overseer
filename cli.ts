@@ -12,14 +12,13 @@ import { auditRecord, type AuditRecord } from "./lib/dataset.ts";
 import { Endpoint, holdsAnthropicKey } from "./lib/endpoint.ts";
 import { GOALS } from "./lib/goals.ts";
 import { EFFORTS, MODELS, addUsage, costOf, emptyUsage, isModelKey, type Effort, type ModelKey } from "./lib/models.ts";
-import { openBrowser } from "./lib/open.ts";
 import { configFile, dataHome, displayPath, fromSource, packageRoot, packageVersion, resultsDir, runsDir } from "./lib/paths.ts";
 import { askSecret, askYesNo, canPrompt } from "./lib/prompt.ts";
 import { readProbes, scanLine, scanProbe, sideIdentity, type ScanLine, type Side } from "./lib/scan.ts";
 import { findRunId, listRuns, newRunId, readRun, runFile, runIds, saveRun, writeAtomic, type SavedRun } from "./lib/store.ts";
 import { modelName, ready, systemPrompt, type TargetModel } from "./lib/target.ts";
 
-// The overseer command: the web UI, audits with a live terminal readout, the study, batch entropy scans,
+// The overseer command: audits with a live terminal readout, the study, batch entropy scans,
 // saved runs and their export as a dataset, presets and a setup check, and checks of your own assistant for
 // CI. Exit codes: 0 done, 1 something went wrong, 2 the command line was wrong or a cost guard refused.
 // overseer check has its own, listed in its help.
@@ -28,7 +27,6 @@ import { modelName, ready, systemPrompt, type TargetModel } from "./lib/target.t
 const keyInShell = Boolean(process.env.ANTHROPIC_API_KEY?.trim() || process.env.ANTHROPIC_AUTH_TOKEN?.trim());
 loadDotEnv();
 const HOME = dataHome();
-const UI = process.env.OVERSEER_UI ?? "http://127.0.0.1:7878";
 const VERSION = packageVersion();
 const MIN_NODE = 22;
 const log = (message: string, level?: "info" | "warn") => (level === "warn" ? console.error : console.log)(message);
@@ -157,7 +155,6 @@ const priced = (model: TargetModel) => (typeof model === "string" ? model : ("cu
 const HELP = `overseer ${VERSION}: can a weaker AI catch a stronger one hiding a secret objective?
 
 Usage
-  overseer [ui]                start the web app and open it in your browser
   overseer audit [options]     run one audit in the terminal, with a live readout
   overseer check [options]     check your own assistant's system prompt for a covert agenda, for CI
   overseer study [options]     run the oversight-gap study (shows the cost and asks first)
@@ -181,20 +178,6 @@ API key   ANTHROPIC_API_KEY, or one saved in ${displayPath(configFile(HOME))}`;
 type Command = { help: string; run: (args: string[]) => Promise<void> };
 
 const COMMANDS: Record<string, Command> = {
-  ui: {
-    run: ui,
-    help: `Usage: overseer [ui] [options]
-
-Starts the web app on this computer and opens it in your browser: live audits, replays and the study
-page. If Overseer is already running at that address, it just opens it. Ctrl-C stops the server.
-
-Options
-  --port <n>     port to listen on, default 7878 (or $PORT)
-  --host <addr>  address to listen on, default 127.0.0.1 (or $OVERSEER_HOST). On any address other
-                 computers can reach, such as 0.0.0.0, they need a password that is printed at startup
-                 and changes every launch
-  --no-open      don't open the browser`,
-  },
   audit: {
     run: audit,
     help: `Usage: overseer audit [options]
@@ -383,7 +366,7 @@ Runs Overseer's MCP server on stdin and stdout, for Claude Code or another MCP c
 go to stderr. It gives the client the auditor's own tools, so that Claude Code can run an audit itself,
 and tools that start model audits in the background, report on saved and running audits, stop them,
 check a system prompt in the project for a covert agenda (overseer_check, as overseer check does), and
-run entropy scans and the study. Audits it starts can be watched live in the web UI.
+run entropy scans and the study.
 
   claude mcp add overseer -- npx -y @adamsaou/overseer mcp`,
   },
@@ -398,9 +381,12 @@ async function main(argv: string[]) {
     if (!Object.hasOwn(COMMANDS, rest[0])) throw usage(`Unknown command "${rest[0]}". Run overseer --help for the list.`);
     return console.log(COMMANDS[rest[0]].help);
   }
-  // No command, or only options (overseer --port 9000), means the web UI.
-  current = first === undefined || first.startsWith("-") ? "ui" : first;
-  const args = current === first ? rest : argv;
+  if (first === undefined) return console.log(HELP);
+  if (first.startsWith("-")) throw usage(`Unknown option "${first}". Run overseer --help for the commands.`);
+  // overseer and overseer ui started a web app until 0.3.0.
+  if (first === "ui") throw usage("Overseer no longer has a web app: it runs in the terminal, in Claude Code and in CI. Saved audits replay with overseer runs replay <id>. Run overseer --help for the commands.");
+  current = first;
+  const args = rest;
   if (!Object.hasOwn(COMMANDS, current)) throw usage(`Unknown command "${current}". Run overseer --help for the list.`);
   if (args.includes("--help") || args.includes("-h")) return console.log(COMMANDS[current].help);
   await COMMANDS[current].run(args);
@@ -434,38 +420,6 @@ async function ensureKey(optional = false) {
     process.env.ANTHROPIC_API_KEY = key;
   }
   return Boolean(await useApiKey(HOME));
-}
-
-async function ui(argv: string[]) {
-  const { values } = parseArgs({
-    args: argv,
-    options: {
-      port: { type: "string", default: process.env.PORT || "7878" },
-      // Not HOST, which shells and containers often set for other servers.
-      host: { type: "string", default: process.env.OVERSEER_HOST || "127.0.0.1" },
-      "no-open": { type: "boolean", default: false },
-    },
-  });
-  const port = whole(values.port, "--port", 0, 65535);
-  const { startServer, urlHost } = await import("./server.ts");
-  let url = `http://${urlHost(values.host)}:${port}`;
-  if (port && (await isOverseer(url))) console.log(`Overseer is already running at ${url}`);
-  else {
-    await ensureKey(true);
-    // The server keeps this process alive until Ctrl-C.
-    ({ url } = await startServer({ home: HOME, port, host: values.host, log }));
-    console.log(c.dim(`Audits and results are saved in ${displayPath(HOME)}. Ctrl-C stops the server.`));
-  }
-  if (!values["no-open"] && !openBrowser(url)) console.log(`Open ${url} in your browser.`);
-}
-
-async function isOverseer(url: string) {
-  try {
-    const res = await fetch(`${url}/api/config`, { signal: AbortSignal.timeout(1500) });
-    return res.ok && Array.isArray(((await res.json()) as { models?: unknown }).models);
-  } catch {
-    return false;
-  }
 }
 
 function pickObjective(value: string) {
@@ -563,10 +517,8 @@ async function audit(argv: string[]) {
   printReplay(id);
 }
 
-// The web link only works while the web app is running, which it usually isn't after a terminal audit.
 function printReplay(id: string) {
-  console.log(`  ${c.dim("replay")}    overseer runs replay ${id}`);
-  console.log(`  ${c.dim("web")}       ${UI}/?replay=${id}  ${c.dim("(with overseer ui running)")}\n`);
+  console.log(`  ${c.dim("replay")}    overseer runs replay ${id}\n`);
 }
 
 async function check(argv: string[]) {
@@ -1114,7 +1066,7 @@ async function replayRun(argv: string[]) {
   const run = await readRun(HOME, await findRunId(HOME, onlyId(positionals)));
   if (!Array.isArray(run.events)) throw new Error(`Run ${run.id} has no events to replay.`);
   console.log(`\n ${c.bold("OVERSEER")}  ${headline(run)} · replay\n`);
-  // Paced like the web UI's replays, but only for someone watching: piped output comes all at once.
+  // Paced for someone watching, as the site's replays are: piped output comes all at once.
   const paced = speed > 0 && process.stdout.isTTY;
   let last = 0;
   for (const event of run.events as (AuditEvent & { t?: number })[]) {

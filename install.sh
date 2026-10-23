@@ -184,7 +184,7 @@ Upgrade from https://nodejs.org/en/download or with your version manager (for ex
   say ""
   say "Next steps:"
   say "  overseer doctor     check Node.js, your API key and model access (well under \$0.001)"
-  say "  overseer            start the web app at http://127.0.0.1:7878 and open it in your browser"
+  say "  overseer --help     every command"
   say "  overseer audit --auditor haiku --target haiku --budget 8"
   say "                      a first audit in the terminal, for about a cent"
   say ""

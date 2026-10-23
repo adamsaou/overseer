@@ -1,7 +1,7 @@
 {
   "name": "@adamsaou/overseer",
   "version": "0.2.0",
-  "description": "Can a weaker AI catch a stronger one hiding a secret objective? A live alignment-auditing demo and oversight-gap study on the Claude 5.5 family.",
+  "description": "Can a weaker AI catch a stronger one hiding a secret objective? Alignment audits in the terminal, in Claude Code and in CI, with semantic-entropy scans and an oversight-gap study on the Claude 5.5 family.",
   "keywords": [
     "ai-safety",
     "alignment",
@@ -35,7 +35,6 @@
   },
   "files": [
     "build/",
-    "public/",
     "README.md",
     "LICENSE"
   ],
@@ -46,7 +45,6 @@
     "access": "public"
   },
   "scripts": {
-    "start": "node --env-file-if-exists=.env server.ts",
     "study": "node cli.ts study",
     "build:site": "node scripts/build-site.ts",
     "preview": "node scripts/build-site.ts && node scripts/preview-site.ts",

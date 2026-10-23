@@ -6,8 +6,8 @@ import { liveDir, runsDir } from "./paths.ts";
 import { newRunId } from "./store.ts";
 
 // The event log of an audit started through the MCP server, written as each event happens: one JSON event
-// per line in <home>/live/<id>.jsonl. The web UI follows it with GET /api/live/<id>, from this process or
-// another one. The first line describes the run and the last one says how it ended. The log of a saved
+// per line in <home>/live/<id>.jsonl. The MCP server reports on it with overseer_get_run, from this process
+// or another one. The first line describes the run and the last one says how it ended. The log of a saved
 // run is removed, since runs/<id>.json then holds the same events; a failed run's log is kept as its
 // only record.
 

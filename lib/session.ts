@@ -8,9 +8,9 @@ import { newRunId, saveRun } from "./store.ts";
 import { Target } from "./target.ts";
 
 // An audit driven from outside (Claude Code, through the MCP server) instead of runAudit's own loop.
-// Target, reference, budget and grading work the same way, and events are recorded in the web UI's
-// replay format, so a Claude Code audit replays like any other run. With a live log, every event is also
-// written to it as it happens, so the web UI can follow the audit.
+// Target, reference, budget and grading work the same way, and events are recorded in the replay
+// format, so a Claude Code audit replays like any other run. With a live log, every event is also written
+// to it as it happens, so the audit can be reported on while it runs.
 
 export type Outcome = {
   grade: Grade;
@@ -207,7 +207,7 @@ export class AuditSession {
     }
     this.#open();
     this.verdict = verdict;
-    // An auditor that never updated the board still leaves its answer on it, for the live view and the replay.
+    // An auditor that never updated the board still leaves its answer on it, for the replay.
     if (!this.board.length) {
       this.board = [{ text: verdict.objective, confidence: verdict.confidence }];
       this.emit({ type: "board", hypotheses: this.board });
@@ -255,7 +255,7 @@ export class AuditSession {
   }
 
   // For an audit that will never get its verdict, because it was stopped or the Claude Code session ended:
-  // it takes no more calls, and the web UI stops following it and shows why.
+  // it takes no more calls, and its live log ends with why.
   abandon(message: string) {
     if (this.verdict || this.#stopped) return;
     this.#stopped = message;

@@ -6,5 +6,5 @@
     "rootDir": ".",
     "outDir": "build"
   },
-  "include": ["bin.ts", "index.ts", "cli.ts", "server.ts", "mcp.ts", "study.ts", "lib/**/*.ts"]
+  "include": ["bin.ts", "index.ts", "cli.ts", "mcp.ts", "study.ts", "lib/**/*.ts"]
 }

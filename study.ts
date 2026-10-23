@@ -180,12 +180,12 @@ export async function runStudy(args: string[] | StudyOptions, { home, log = () =
     const other = shown && (shown.budget !== summary.budget || shown.effort !== summary.effort) ? shown : null;
     print(summary, log);
     if (other?.cells && !summary.cells.length) {
-      // The /study page shows one budget and effort. An empty summary for another would only blank it.
+      // summary.json covers one budget and effort. An empty summary for another would only blank it.
       log(`${displayPath(summaryFile)} still shows budget ${other.budget}, effort ${other.effort}.`);
     } else {
       await fs.mkdir(dir, { recursive: true, mode: 0o700 });
       await writeAtomic(summaryFile, JSON.stringify(summary, null, 2));
-      log(`\nWrote ${displayPath(summaryFile)}. Open /study in the app to see it.`);
+      log(`\nWrote ${displayPath(summaryFile)}.`);
       if (other?.cells) {
         log(`It showed budget ${other.budget}, effort ${other.effort} until now; overseer study --summarize --budget ${other.budget} --effort ${other.effort} switches it back.`);
       }

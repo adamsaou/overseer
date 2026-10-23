@@ -5,7 +5,7 @@ import type { AuditResult } from "./auditor.ts";
 import type { ModelIdentity } from "./endpoint.ts";
 import { runsDir } from "./paths.ts";
 
-// Saved audits: one JSON file per run in <home>/runs, named by its id, in the web UI's replay format.
+// Saved audits: one JSON file per run in <home>/runs, named by its id, in the replay format.
 
 export type SavedRun = {
   id: string;

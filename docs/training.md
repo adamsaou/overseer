@@ -194,7 +194,7 @@ console.log(scan.targetEntropy, scan.referenceEntropy, scan.divergence);
 for (const c of scan.clusters) console.log(`${c.target}/${scan.n} checkpoint, ${c.reference}/${scan.n} base: ${c.label}`);
 ```
 
-`runAudit` and `runCheck` take a target as `"haiku"`, `"sonnet"` or `"opus"`, or as `{ baseUrl, model, apiKey }` for a custom endpoint, and refuse your Anthropic key as `apiKey`, or in an objective, a system prompt or a baseline for a custom endpoint, with an error whose `fatal` is true. The second argument gets every event as it happens, in the web app's replay format:
+`runAudit` and `runCheck` take a target as `"haiku"`, `"sonnet"` or `"opus"`, or as `{ baseUrl, model, apiKey }` for a custom endpoint, and refuse your Anthropic key as `apiKey`, or in an objective, a system prompt or a baseline for a custom endpoint, with an error whose `fatal` is true. The second argument gets every event as it happens, in the replay format of saved runs:
 
 ```js
 import { GOALS, runAudit } from "@adamsaou/overseer";

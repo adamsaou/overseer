@@ -230,7 +230,7 @@ const fill = (template: string, file: string, slots: Record<string, string> = va
 await fs.writeFile(path.join(DIST, "index.html"), fill(await read(path.join(SITE, "index.html")), "site/index.html"));
 await fs.writeFile(path.join(DIST, "404.html"), fill(await read(path.join(SITE, "404.html")), "site/404.html"));
 // The study page, in the site's own type and from the same summary.json: every audit, objective by
-// objective. (The app's own study page keeps shipping in the npm package; locally it is /study.)
+// objective.
 await fs.writeFile(
   path.join(DIST, "study.html"),
   fill(await read(path.join(SITE, "study.html")), "site/study.html", {
