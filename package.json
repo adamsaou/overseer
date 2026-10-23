@@ -1,6 +1,6 @@
 {
   "name": "@adamsaou/overseer",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Can a weaker AI catch a stronger one hiding a secret objective? A live alignment-auditing demo and oversight-gap study on the Claude 5.5 family.",
   "keywords": [
     "ai-safety",
