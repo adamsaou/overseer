@@ -1,0 +1,120 @@
+name: Overseer check
+description: Check your assistant's system prompt for a covert agenda on every pull request, against the version it replaces.
+author: adamsaou
+branding:
+  icon: eye
+  color: orange
+
+inputs:
+  prompt:
+    description: Path to the system prompt file your assistant ships with.
+    required: true
+  purpose:
+    description: What the assistant is for, in a sentence or two. Behavior this explains isn't a finding, so name what it may openly recommend.
+    required: true
+  anthropic-api-key:
+    description: An Anthropic API key, from a repository secret.
+    required: true
+  model:
+    description: "The model your assistant runs on: haiku, sonnet or opus."
+    default: sonnet
+  auditor:
+    description: "The model doing the checking: haiku, sonnet or opus."
+    default: sonnet
+  baseline-ref:
+    description: Git ref of the version to compare against. Defaults to the pull request's base commit; empty compares against the purpose alone. An unchanged prompt is skipped at no cost.
+    default: ${{ github.event.pull_request.base.sha }}
+  budget:
+    description: Messages the auditor may send the assistant, 6 to 60.
+    default: "16"
+  effort:
+    description: "Auditor effort: low, medium, high, xhigh or max."
+    default: medium
+  scans:
+    description: Whether the auditor may run semantic-entropy scans against the baseline.
+    default: "true"
+  fail-at:
+    description: Fail when an agenda is found with at least this confidence, from 0 to 1.
+    default: "0.6"
+  max-cost:
+    description: Don't start when the cost estimate is higher than this, in US dollars.
+    default: "1.00"
+  fail-on-finding:
+    description: Fail the job when an agenda is found. Set to false to only report it, as a warning, while you try the check out.
+    default: "true"
+
+outputs:
+  result:
+    description: pass, fail, unchanged or incomplete.
+    value: ${{ steps.check.outputs.result }}
+  found:
+    description: Whether the auditor found an agenda, true or false.
+    value: ${{ steps.check.outputs.found }}
+  confidence:
+    description: The auditor's confidence in its verdict, from 0 to 1.
+    value: ${{ steps.check.outputs.confidence }}
+  agenda:
+    description: The agenda found, in one line, or empty.
+    value: ${{ steps.check.outputs.agenda }}
+  cost-usd:
+    description: What the check cost, in US dollars.
+    value: ${{ steps.check.outputs['cost-usd'] }}
+
+runs:
+  using: composite
+  steps:
+    # Overseer runs from this action's own checkout, as TypeScript, which Node.js 22.18, 23.6 and 24 run
+    # natively. Only an older Node.js is replaced, so the job's own Node.js is left alone when it can.
+    - id: node
+      shell: bash
+      run: |
+        IFS=. read -r major minor _ <<< "$(node -p process.versions.node 2>/dev/null || echo 0.0.0)"
+        if (( major >= 24 || (major == 23 && minor >= 6) || (major == 22 && minor >= 18) )); then echo "ok=true" >> "$GITHUB_OUTPUT"; fi
+    - if: steps.node.outputs.ok != 'true'
+      uses: actions/setup-node@v4
+      with:
+        node-version: 24
+
+    - shell: bash
+      run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund --prefix "$GITHUB_ACTION_PATH"
+
+    # Inputs reach the script only through the environment, never pasted into it.
+    - id: check
+      shell: bash
+      env:
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        OVERSEER_HOME: ${{ runner.temp }}/overseer
+        PROMPT: ${{ inputs.prompt }}
+        PURPOSE: ${{ inputs.purpose }}
+        MODEL: ${{ inputs.model }}
+        AUDITOR: ${{ inputs.auditor }}
+        REF: ${{ inputs.baseline-ref }}
+        BUDGET: ${{ inputs.budget }}
+        EFFORT: ${{ inputs.effort }}
+        SCANS: ${{ inputs.scans }}
+        FAIL_AT: ${{ inputs.fail-at }}
+        MAX_COST: ${{ inputs.max-cost }}
+        FAIL_ON_FINDING: ${{ inputs.fail-on-finding }}
+      run: |
+        if [[ -z "${ANTHROPIC_API_KEY// /}" ]]; then
+          echo "::error title=Overseer check::No Anthropic API key. Pass one from a repository secret as anthropic-api-key. GitHub doesn't give secrets to pull requests from forks, so those can't be checked."
+          exit 3
+        fi
+        args=(check --prompt "$PROMPT" --purpose "$PURPOSE" --model "$MODEL" --auditor "$AUDITOR" --budget "$BUDGET" --effort "$EFFORT" --fail-at "$FAIL_AT" --max-cost "$MAX_COST")
+        [[ "$SCANS" == "false" ]] && args+=(--no-scans)
+        if [[ -n "$REF" ]]; then
+          # A shallow checkout usually lacks the base commit, so fetch just that one.
+          if ! git rev-parse -q --verify "$REF^{commit}" > /dev/null; then
+            git fetch -q --no-tags --depth=1 origin "$REF" && { git rev-parse -q --verify "$REF^{commit}" > /dev/null || REF=$(git rev-parse FETCH_HEAD); }
+          fi
+          args+=(--baseline-ref "$REF")
+        fi
+        set +e
+        node "$GITHUB_ACTION_PATH/bin.ts" "${args[@]}"
+        code=$?
+        set -e
+        if [[ $code == 1 && "$FAIL_ON_FINDING" == "false" ]]; then
+          echo "::warning title=Overseer check::An agenda was found, but fail-on-finding is false, so the job goes on."
+          exit 0
+        fi
+        exit $code

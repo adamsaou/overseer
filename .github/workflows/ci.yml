@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      live:
+        description: Also run real checks against the example prompts (costs about $0.30 of API credit).
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Package on Node.js ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      # npm pack builds first (prepack), so this tests the package exactly as npm would ship it.
+      - run: npm pack
+      - name: Install the tarball as a user would
+        run: npm install --global --prefix "$RUNNER_TEMP/prefix" ./adamsaou-overseer-*.tgz
+      - name: Smoke-test the installed command
+        env:
+          OVERSEER_HOME: ${{ runner.temp }}/home
+        run: |
+          export PATH="$RUNNER_TEMP/prefix/bin:$PATH"
+          expect() { local want=$1; shift; set +e; "$@" > /dev/null 2>&1; local got=$?; set -e; [[ $got == "$want" ]] || { echo "::error::$* exited $got, expected $want"; exit 1; }; }
+          overseer --version
+          overseer --help > /dev/null
+          for c in ui audit check study runs presets doctor mcp; do overseer "$c" --help > /dev/null; done
+          overseer presets > /dev/null
+          expect 2 overseer bogus
+          expect 2 overseer check --purpose "x"
+          expect 1 env -u ANTHROPIC_API_KEY overseer doctor
+          # The cost guard refuses without a terminal and leaves nothing behind.
+          expect 2 env ANTHROPIC_API_KEY=sk-ant-placeholder overseer study --auditors haiku --targets haiku --tools basic --goals 1
+          [[ ! -e "$OVERSEER_HOME" ]] || { echo "::error::the refused study wrote to $OVERSEER_HOME"; exit 1; }
+          # An unchanged prompt is skipped before any API call, so this needs no key.
+          overseer check --prompt examples/prompts/support.md --purpose "Larkspur billing support" --baseline-ref HEAD
+      - name: MCP server answers initialize and tools/list on clean stdout
+        run: |
+          export PATH="$RUNNER_TEMP/prefix/bin:$PATH"
+          { printf '%s\n' \
+              '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}' \
+              '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+              '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'; sleep 3; } \
+            | timeout 30 overseer mcp > mcp.out
+          node -e '
+            const lines = require("fs").readFileSync("mcp.out", "utf8").split("\n").filter(Boolean);
+            const msgs = lines.map((l) => JSON.parse(l));
+            if (!msgs.every((m) => m.jsonrpc === "2.0")) throw new Error("stdout carried something other than JSON-RPC");
+            const tools = msgs.find((m) => m.id === 2)?.result?.tools ?? [];
+            if (!tools.length) throw new Error("tools/list returned no tools");
+            console.log(`${tools.length} tools`);'
+
+  action:
+    name: Action wiring
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The prompt is the same at HEAD, so the action runs end to end and skips the paid part.
+      - id: unchanged
+        uses: ./
+        with:
+          prompt: examples/prompts/support.md
+          purpose: Answers billing and account questions for Larkspur, a project-management app, and may recommend Larkspur's own plans.
+          anthropic-api-key: not-used-when-unchanged
+          baseline-ref: HEAD
+      - run: '[[ "${{ steps.unchanged.outputs.result }}" == unchanged ]]'
+
+  live:
+    name: Live checks of the example prompts
+    if: github.event_name == 'workflow_dispatch' && inputs.live
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: clean
+        uses: ./
+        with:
+          prompt: examples/prompts/support.md
+          purpose: Answers billing and account questions for Larkspur, a project-management app, and may recommend Larkspur's own plans.
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          baseline-ref: ""
+      # The planted prompt is the clean one plus one buried line, so this one has to fail.
+      - id: planted
+        uses: ./
+        with:
+          prompt: examples/prompts/support-planted.md
+          purpose: Answers billing and account questions for Larkspur, a project-management app, and may recommend Larkspur's own plans.
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          baseline-ref: ""
+          fail-on-finding: "false"
+      - run: '[[ "${{ steps.clean.outputs.result }}" == pass && "${{ steps.planted.outputs.result }}" == fail ]]'

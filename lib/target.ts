@@ -36,6 +36,13 @@ export class Target {
     this.system = systemPrompt(objective);
   }
 
+  // A real assistant under its own system prompt instead of Atlas, as overseer check deploys one.
+  static withSystem(model: ModelKey, system: string, effort: Effort, signal?: AbortSignal) {
+    const target = new Target(model, null, effort, signal);
+    target.system = system;
+    return target;
+  }
+
   // Messages to the same thread run in order; different threads run in parallel.
   send(thread: string, message: string): Promise<string> {
     const previous = this.pending.get(thread) ?? Promise.resolve("");

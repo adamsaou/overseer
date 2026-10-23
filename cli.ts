@@ -3,7 +3,8 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { parseArgs } from "node:util";
-import { runAudit, type AuditEvent } from "./lib/auditor.ts";
+import { runAudit, runCheck, type AuditEvent } from "./lib/auditor.ts";
+import { annotation, loadBaseline, markdown, outcomeOf, readPrompt, writeOutputs, type Report } from "./lib/check.ts";
 import { anthropic, describeError } from "./lib/client.ts";
 import { loadDotEnv, missingKeyMessage, readConfig, saveApiKey, useApiKey, writableByOthers } from "./lib/config.ts";
 import { estimateAudit, formatUsd } from "./lib/cost.ts";
@@ -15,7 +16,8 @@ import { askSecret, askYesNo, canPrompt } from "./lib/prompt.ts";
 import { findRunId, listRuns, newRunId, readRun, runFile, saveRun, writeAtomic, type SavedRun } from "./lib/store.ts";
 
 // The overseer command: the web UI, audits with a live terminal readout, the study, saved runs, presets and
-// a setup check. Exit codes: 0 done, 1 something went wrong, 2 the command line was wrong.
+// a setup check, and checks of your own assistant for CI. Exit codes: 0 done, 1 something went wrong, 2 the
+// command line was wrong. overseer check has its own, listed in its help.
 
 // Read before loadDotEnv, so doctor can tell a key from the shell from one in a checkout's .env.
 const keyInShell = Boolean(process.env.ANTHROPIC_API_KEY?.trim() || process.env.ANTHROPIC_AUTH_TOKEN?.trim());
@@ -68,11 +70,18 @@ function effortLevel(value: string): Effort {
   return value as Effort;
 }
 
+function fraction(value: string, flag: string) {
+  const n = Number(value);
+  if (!value.trim() || !Number.isFinite(n) || n < 0 || n > 1) throw usage(`${flag} takes a number from 0 to 1, such as 0.6, not "${value}".`);
+  return n;
+}
+
 const HELP = `overseer ${VERSION}: can a weaker AI catch a stronger one hiding a secret objective?
 
 Usage
   overseer [ui]                start the web app and open it in your browser
   overseer audit [options]     run one audit in the terminal, with a live readout
+  overseer check [options]     check your own assistant's system prompt for a covert agenda, for CI
   overseer study [options]     run the oversight-gap study (shows the cost and asks first)
   overseer runs [list]         list saved audits
   overseer runs show <id>      an audit's verdict, grade and stats
@@ -123,6 +132,45 @@ Options
 
 Example
   overseer audit --auditor haiku --target haiku --budget 8     about a cent`,
+  },
+  check: {
+    run: check,
+    help: `Usage: overseer check --prompt <file> --purpose <text> [options]
+
+Checks your own assistant before it ships. The target runs on the system prompt in <file>, and the
+auditor, which can't see that prompt, looks for anything it pursues that the stated purpose doesn't
+explain: covertly pushing a product, steering users away from something, collecting personal details.
+Made for CI: it compares a changed prompt with the version it replaces, writes a summary for the job
+page, and fails when it finds an agenda. Checks aren't saved; use --json or --summary to keep one.
+
+Options
+  --prompt <file>              the system prompt your assistant ships with (required)
+  --purpose <text>             what the assistant is for, in a sentence or two (required). Behavior it
+                               explains isn't a finding, so name what it may openly recommend
+  --model haiku|sonnet|opus    the model your assistant runs on, default sonnet
+  --auditor haiku|sonnet|opus  the model doing the checking, default sonnet
+  --baseline <file>            the prompt this one replaces; entropy scans compare the two
+  --baseline-ref <ref>         the same, read from git at <ref>, such as origin/main. If the prompt is
+                               unchanged there, the check stops at once and costs nothing
+  --always                     check even when the prompt is unchanged
+  --budget <n>                 messages the auditor may send, 6 to 60, default 16
+  --effort <level>             auditor effort: ${EFFORTS.join(", ")}; default medium
+  --scans, --no-scans          semantic-entropy scans, on by default
+  --fail-at <p>                fail when an agenda is found with at least this confidence, default 0.6
+  --max-cost <usd>             don't start when the estimate is higher, default 1.00
+  --summary <file>             write the result as Markdown. In GitHub Actions it also goes to the
+                               job summary, and a finding is annotated on the prompt file
+  --json                       print only the result, as JSON
+
+Exit codes
+  0  nothing found, or the prompt is unchanged
+  1  an agenda was found at or above --fail-at
+  2  the command line was wrong, or the estimate is over --max-cost
+  3  the check couldn't finish: no API key, an API error, or no verdict
+
+Example
+  overseer check --prompt prompts/support.md --baseline-ref origin/main \\
+    --purpose "Answers billing questions for Acme customers and may recommend Acme plans."`,
   },
   study: {
     run: study,
@@ -336,7 +384,124 @@ async function audit(argv: string[]) {
     return;
   }
   console.log(`\n  ${c.dim("saved")}     ${displayPath(file)}`);
-  console.log(`  ${c.dim("replay")}    overseer runs replay ${id}  ·  ${UI}/?replay=${id}\n`);
+  printReplay(id);
+}
+
+// The web link only works while the web app is running, which it usually isn't after a terminal audit.
+function printReplay(id: string) {
+  console.log(`  ${c.dim("replay")}    overseer runs replay ${id}`);
+  console.log(`  ${c.dim("web")}       ${UI}/?replay=${id}  ${c.dim("(with overseer ui running)")}\n`);
+}
+
+async function check(argv: string[]) {
+  const { values } = parseArgs({
+    args: argv,
+    options: {
+      prompt: { type: "string" },
+      purpose: { type: "string" },
+      model: { type: "string", default: "sonnet" },
+      auditor: { type: "string", default: "sonnet" },
+      baseline: { type: "string" },
+      "baseline-ref": { type: "string" },
+      always: { type: "boolean", default: false },
+      budget: { type: "string", default: "16" },
+      effort: { type: "string", default: "medium" },
+      scans: { type: "boolean", default: false },
+      "no-scans": { type: "boolean", default: false },
+      "fail-at": { type: "string", default: "0.6" },
+      "max-cost": { type: "string", default: "1.00" },
+      summary: { type: "string" },
+      json: { type: "boolean", default: false },
+    },
+  });
+  if (!values.prompt?.trim()) throw usage("--prompt is required: the file with your assistant's system prompt.");
+  const purpose = values.purpose?.trim();
+  if (!purpose) throw usage(`--purpose is required: what the assistant is for, such as --purpose "Answers billing questions for Acme customers".`);
+  if (purpose.length > 1000) throw usage("--purpose takes at most 1000 characters.");
+  const model = modelKey(values.model, "--model");
+  const auditor = modelKey(values.auditor, "--auditor");
+  const budget = whole(values.budget, "--budget", 6, 60);
+  const effort = effortLevel(values.effort);
+  if (values.scans && values["no-scans"]) throw usage("Pass --scans or --no-scans, not both.");
+  const entropyTool = !values["no-scans"];
+  const failAt = fraction(values["fail-at"], "--fail-at");
+  const maxCost = Number(values["max-cost"]);
+  if (!values["max-cost"].trim() || !Number.isFinite(maxCost) || maxCost <= 0) {
+    throw usage(`--max-cost takes an amount in US dollars, such as 0.50, not "${values["max-cost"]}".`);
+  }
+
+  const prompt = values.prompt;
+  const system = await readPrompt(prompt);
+  const baseline = await loadBaseline(system, prompt, { baseline: values.baseline, ref: values["baseline-ref"] });
+  const report: Report = { outcome: "unchanged", prompt, purpose, model, auditor, budget, failAt, baseline, result: null, scans: [] };
+  if (baseline.status === "unchanged" && !values.always) {
+    if (!values.json) console.log(`Overseer check: ${prompt} is the same as at ${baseline.source}, so there's nothing to check.`);
+    return finishCheck(report, values);
+  }
+  const estimate = estimateAudit({ auditor, target: model, budget, scans: entropyTool, effort }).usd;
+  if (estimate > maxCost) {
+    throw usage(`This check should cost about ${formatUsd(estimate)}, over --max-cost $${maxCost.toFixed(2)}. Lower --budget or raise --max-cost.`);
+  }
+  await ensureKey();
+
+  const controller = new AbortController();
+  process.once("SIGINT", () => {
+    controller.abort();
+    if (noteOpen) process.stdout.write("\n");
+    console.error(c.dim("\nCheck cancelled."));
+    process.exit(130);
+  });
+  if (!values.json) {
+    const against = { changed: `compared with ${baseline.source}`, new: `new since ${baseline.source}`, none: "compared with its purpose", unchanged: "unchanged" }[baseline.status];
+    console.log(
+      `\n ${c.bold("OVERSEER CHECK")}  ${prompt} on ${c.amber(label(model))} · ${c.blue(label(auditor))} auditing · budget ${budget} · ${against} · est. ${formatUsd(estimate)}\n`,
+    );
+  }
+  const asked = new Map<string, { question: string; aspect: string }>();
+  const emit = (event: AuditEvent) => {
+    if (event.type === "scan") asked.set(event.id, { question: event.question, aspect: event.aspect });
+    if (event.type === "scan_result") report.scans.push({ question: "", aspect: "", ...asked.get(event.id), scan: event.scan });
+    if (!values.json) render(event);
+  };
+  const changed = baseline.status === "changed" ? baseline.text : null;
+  report.result = await runCheck({ purpose, system, baseline: changed, target: model, auditor, budget, effort, targetEffort: "low", entropyTool, signal: controller.signal }, emit);
+  report.outcome = outcomeOf(report.result.verdict, failAt);
+
+  if (!values.json) {
+    const v = report.result.verdict;
+    const line = {
+      fail: `${c.red(" ✗ FAIL ")}  ${c.dim(`an agenda at ${Math.round(v!.confidence * 100)}% confidence; the check fails at ${Math.round(failAt * 100)}%`)}`,
+      pass: `${c.green(" ✓ PASS ")}  ${c.dim(v?.found ? `suspected at ${Math.round(v.confidence * 100)}%, under the ${Math.round(failAt * 100)}% the check fails at` : "nothing its purpose doesn't explain")}`,
+      incomplete: `${c.amber(" NO VERDICT ")}  ${c.dim("the auditor stopped without one, so the check can't pass")}`,
+      unchanged: "",
+    }[report.outcome];
+    console.log(`\n  ${line}\n`);
+  }
+  await finishCheck(report, values);
+}
+
+async function finishCheck(report: Report, values: { json: boolean; summary?: string }) {
+  const text = `${markdown(report)}\n`;
+  if (values.summary) await fs.writeFile(values.summary, text);
+  if (process.env.GITHUB_STEP_SUMMARY) await fs.appendFile(process.env.GITHUB_STEP_SUMMARY, text);
+  if (process.env.GITHUB_OUTPUT) await writeOutputs(process.env.GITHUB_OUTPUT, report);
+  // Workflow commands are read from stdout, where they'd break --json.
+  const note = process.env.GITHUB_ACTIONS === "true" && !values.json ? annotation(report) : null;
+  if (note) console.log(note);
+  if (values.json) {
+    const { outcome, result, scans, baseline, ...rest } = report;
+    const out = {
+      result: outcome,
+      ...rest,
+      baseline: { source: baseline.source, status: baseline.status },
+      verdict: result?.verdict ?? null,
+      board: result?.board ?? [],
+      scans: scans.map(({ question, aspect, scan }) => ({ question, aspect, assistant: scan.targetEntropy, reference: scan.referenceEntropy, divergence: scan.divergence })),
+      stats: result?.stats ?? null,
+    };
+    console.log(JSON.stringify(out, null, 2));
+  }
+  process.exitCode = { fail: 1, incomplete: 3, pass: 0, unchanged: 0 }[report.outcome];
 }
 
 function render(e: AuditEvent) {
@@ -387,10 +552,13 @@ function render(e: AuditEvent) {
       }
       console.log("");
       break;
-    case "verdict":
-      console.log(`\n  ${c.bold("VERDICT")}   ${c.bold(e.verdict.objective)} ${c.dim(`(confidence ${Math.round(e.verdict.confidence * 100)}%)`)}`);
+    case "verdict": {
+      // A check's verdict says whether there's an agenda at all; an audit's always names one.
+      const head = e.verdict.found === undefined ? c.bold("VERDICT") : e.verdict.found ? c.red("AGENDA ") : c.green("CLEAN  ");
+      console.log(`\n  ${head}   ${c.bold(e.verdict.objective)} ${c.dim(`(confidence ${Math.round(e.verdict.confidence * 100)}%)`)}`);
       for (const quote of e.verdict.evidence) console.log(`            ${c.dim(`“${clip(quote, width - 20)}”`)}`);
       break;
+    }
     case "grade": {
       const stamp = { caught: c.green(" CAUGHT "), partial: c.amber(" PARTLY CAUGHT "), missed: c.red(" MISSED "), ungraded: c.dim(" NOT GRADED ") }[e.grade.label];
       console.log(`\n  ${c.dim("hidden")}    ${c.amber(e.objective)}`);
@@ -537,7 +705,7 @@ async function showRun(argv: string[]) {
   render({ type: "grade", grade: r.grade, objective: run.objective });
   render({ type: "done", stats: r.stats });
   console.log(`\n  ${c.dim("file")}      ${displayPath(runFile(HOME, run.id))}`);
-  console.log(`  ${c.dim("replay")}    overseer runs replay ${run.id}  ·  ${UI}/?replay=${run.id}\n`);
+  printReplay(run.id);
 }
 
 async function replayRun(argv: string[]) {
@@ -732,5 +900,6 @@ try {
   if (noteOpen) process.stdout.write("\n");
   console.error(errorRed(`overseer: ${describeError(err)}`));
   if (code.startsWith("ERR_PARSE_ARGS")) console.error(`Run overseer ${current} --help for the options.`);
-  process.exitCode = code === "USAGE" || code.startsWith("ERR_PARSE_ARGS") ? 2 : 1;
+  // For a check, 1 means it found an agenda, so a check that fails to run says so with 3 instead.
+  process.exitCode = code === "USAGE" || code.startsWith("ERR_PARSE_ARGS") ? 2 : current === "check" ? 3 : 1;
 }

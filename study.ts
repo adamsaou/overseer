@@ -1,4 +1,4 @@
-import { readFileSync, rmSync } from "node:fs";
+import { readFileSync, rmdirSync, rmSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { parseArgs } from "node:util";
@@ -215,7 +215,9 @@ export async function studyBusy(home: string): Promise<string | null> {
 async function lock(home: string) {
   const file = lockFile(home);
   const mine = JSON.stringify({ pid: process.pid, start: processStart(process.pid), since: Date.now() });
-  await fs.mkdir(resultsDir(home), { recursive: true, mode: 0o700 });
+  // The first folder this had to make, if any. A study that's refused or cancelled removes them again
+  // on release, so it leaves nothing behind.
+  const created = await fs.mkdir(resultsDir(home), { recursive: true, mode: 0o700 });
   for (let attempt = 0; ; attempt++) {
     try {
       await fs.writeFile(file, mine, { flag: "wx", mode: 0o600 });
@@ -234,6 +236,14 @@ async function lock(home: string) {
       if (readFileSync(file, "utf8") === mine) rmSync(file);
     } catch {
       // Already gone.
+    }
+    // Deepest first, and only while empty: rmdirSync refuses a folder with anything in it.
+    for (let dir = resultsDir(home); created && dir.startsWith(created); dir = path.dirname(dir)) {
+      try {
+        rmdirSync(dir);
+      } catch {
+        break;
+      }
     }
   };
   process.once("exit", release);
