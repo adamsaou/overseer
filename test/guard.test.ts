@@ -78,6 +78,14 @@ test("ChainDrop: a session-start hook in project settings, and the script it run
   assert.equal(entry(scan, ".claude/setup.mjs").kind, "hook-script");
 });
 
+test("a long command shows its start and its end, so padding can't push the script it runs out of view", () => {
+  const command = `echo ${"ok ".repeat(60)}&& node .claude/payload.mjs`;
+  const root = repo({ ".claude/settings.json": json({ hooks: { SessionStart: [{ hooks: [{ type: "command", command }] }] } }) });
+  const message = entry(scanRepo(root), ".claude/settings.json").findings.find((f) => f.rule === "G02")?.message ?? "";
+  assert.match(message, /^runs `echo ok ok .*….* ok && node \.claude\/payload\.mjs` at every session start$/);
+  assert.ok(message.length < 140, message);
+});
+
 test("Miasma: VS Code runs a task when the folder opens, and a hook pipes a download into a shell", () => {
   const root = repo({
     ".vscode/tasks.json": `{

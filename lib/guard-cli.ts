@@ -246,11 +246,10 @@ export function hookScript(name: (typeof GIT_HOOKS)[number], version: string): s
 # it, and deleting this file removes it.
 [ "$OVERSEER_GUARD" = off ] && exit 0
 ${pick}
-# A fresh clone has no previous commit, so everything is new; otherwise, only a change to agent configuration
-# starts Overseer.
-if [ "$base" != ${NULL_SHA} ]; then
-  git diff --quiet "$base" HEAD -- ${PATHSPECS.map(quote).join(" ")} 2>/dev/null && exit 0
-fi
+# Only a change to agent configuration starts Overseer. A fresh clone's base is all zeros, so it's compared
+# with an empty tree, and a repository without agent configuration stays quiet.
+case $base in *[!0]*) ;; *) base=$(git hash-object -t tree /dev/null) ;; esac
+git diff --quiet "$base" HEAD -- ${PATHSPECS.map(quote).join(" ")} 2>/dev/null && exit 0
 if [ -n "$OVERSEER_GUARD_BIN" ]; then
   $OVERSEER_GUARD_BIN guard --git-hook ${name} "$@" </dev/null || true
 elif command -v npx >/dev/null 2>&1; then
@@ -260,8 +259,9 @@ exit 0
 `;
 }
 
-// The line that runs guard from a hook of someone else's, with that hook's own arguments.
-const chainLine = (name: string, version: string) => `npx -y @adamsaou/overseer@${version} guard --git-hook ${name} "$@"`;
+// The line that runs guard from a hook of someone else's, with that hook's own arguments. npm's log level is
+// warn, or npx would print its "npm notice run" lines on every run.
+const chainLine = (name: string, version: string) => `npm_config_loglevel=warn npx -y @adamsaou/overseer@${version} guard --git-hook ${name} "$@"`;
 
 function git(args: string[], cwd = process.cwd()): string | null {
   try {

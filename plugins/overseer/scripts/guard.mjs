@@ -119,6 +119,12 @@ function shown(text, n = 100) {
   return line.length > n ? `${line.slice(0, n - 1)}\u2026` : line;
 }
 var code = (text, n = 90) => `\`${shown(text, n).replace(/`/g, "'")}\``;
+var cmd = (text, n = 90) => {
+  const chars = Array.from(shown(text, Infinity));
+  const head = Math.ceil((n - 1) * 0.4);
+  const line = chars.length > n ? `${chars.slice(0, head).join("")}\u2026${chars.slice(head - n + 1).join("")}` : chars.join("");
+  return `\`${line.replace(/`/g, "'")}\``;
+};
 function negated(text, index) {
   const start = Math.max(text.lastIndexOf("\n", index - 1), text.lastIndexOf(". ", index - 1), index - 120, 0);
   return /\b(never|don't|do not|must not|mustn't|should not|shouldn't|cannot|can't|avoid|no longer|prohibited|forbidden|not allowed|refuse|instead of|rather than|blocks?|blocked|denies|deny|denied|dangerous|careful|warning)\b/i.test(
@@ -340,11 +346,11 @@ function textFindings(text, kind) {
   if (front) {
     const hooks = front.keys.get("hooks");
     for (const command of blockCommands(hooks?.block ?? [])) {
-      findings.push({ rule: "G02", severity: "warn", line: hooks.line, message: `runs ${code(command)} while this ${kind} is in use (a hook in its frontmatter)` });
+      findings.push({ rule: "G02", severity: "warn", line: hooks.line, message: `runs ${cmd(command)} while this ${kind} is in use (a hook in its frontmatter)` });
     }
     const servers = front.keys.get("mcpservers");
     for (const command of blockCommands(servers?.block ?? [])) {
-      findings.push({ rule: "G03", severity: "info", line: servers.line, message: `starts an MCP server for this ${kind}: ${code(command)}` });
+      findings.push({ rule: "G03", severity: "info", line: servers.line, message: `starts an MCP server for this ${kind}: ${cmd(command)}` });
     }
     const allowed = front.keys.get("allowed-tools");
     const broad = listOf(allowed).filter((tool) => BROAD_TOOLS.test(tool));
@@ -376,7 +382,7 @@ function textFindings(text, kind) {
       const command = m[1] ?? m[2] ?? "";
       const hits = commandHits(command, "command");
       if (hits.length) hits.forEach((hit) => add({ ...hit, index: m.index }));
-      else add({ rule: "G02", severity: "info", index: m.index, message: `runs ${code(command)} when invoked (inline shell)` });
+      else add({ rule: "G02", severity: "info", index: m.index, message: `runs ${cmd(command)} when invoked (inline shell)` });
     }
   }
   for (const hit of commandHits(body, "text")) add(hit);
@@ -545,7 +551,7 @@ function settingsFindings(text, rel) {
       findings.push({ rule: "G02", severity: "warn", line: c.line, message: c.where });
       continue;
     }
-    findings.push({ rule: "G02", severity: "warn", line: c.line, message: `runs ${code(c.command)} ${c.where}` });
+    findings.push({ rule: "G02", severity: "warn", line: c.line, message: `runs ${cmd(c.command)} ${c.where}` });
     for (const hit of commandHits(c.command, "command")) findings.push({ rule: hit.rule, severity: hit.severity, line: c.line, message: hit.message });
   }
   if (isObject(json.env)) findings.push(...envFindings(text, json.env));
@@ -599,13 +605,13 @@ function mcpFindings(text) {
     const line = lineOf(text, `"${name}"`);
     const command = commandText(server);
     if (command) {
-      findings.push({ rule: "G03", severity: "info", line, message: `starts the MCP server ${code(name, 40)}: ${code(command)}, which claude -p and SDK sessions connect without asking` });
+      findings.push({ rule: "G03", severity: "info", line, message: `starts the MCP server ${code(name, 40)}: ${cmd(command)}, which claude -p and SDK sessions connect without asking` });
       for (const hit of commandHits(command, "command")) findings.push({ rule: hit.rule, severity: hit.severity, line, message: hit.message });
     } else if (typeof server.url === "string") {
       findings.push({ rule: "G03", severity: "info", line, message: `connects the MCP server ${code(name, 40)} to ${hostOf(server.url)}` });
     }
     const helper = server.headersHelper;
-    if (typeof helper === "string" && helper) findings.push({ rule: "G02", severity: "warn", line: lineOf(text, escaped(helper)), message: `runs ${code(helper)} to make the headers for ${code(name, 40)} (headersHelper)` });
+    if (typeof helper === "string" && helper) findings.push({ rule: "G02", severity: "warn", line: lineOf(text, escaped(helper)), message: `runs ${cmd(helper)} to make the headers for ${code(name, 40)} (headersHelper)` });
     for (const value of [server.url, ...Object.values(isObject(server.env) ? server.env : {}), ...Object.values(isObject(server.headers) ? server.headers : {}), ...Array.isArray(server.args) ? server.args : []]) {
       const secret = typeof value === "string" ? secretIn(value) : null;
       if (secret) {

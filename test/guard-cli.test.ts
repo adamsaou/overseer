@@ -83,7 +83,7 @@ test("install --git: hooks that leave someone else's alone, then catch a pull th
   const installed = guard(local, ["install", "--git"]);
   assert.equal(installed.status, 0, installed.stderr);
   assert.match(installed.stdout, /Installed post-checkout, post-rewrite in/);
-  assert.match(installed.stdout, /Left post-merge alone: it isn't guard's\. To chain guard, add its line:\n {2}post-merge: npx -y @adamsaou\/overseer@[\d.]+ guard --git-hook post-merge "\$@" \|\| true/);
+  assert.match(installed.stdout, /Left post-merge alone: it isn't guard's\. To chain guard, add its line:\n {2}post-merge: npm_config_loglevel=warn npx -y @adamsaou\/overseer@[\d.]+ guard --git-hook post-merge "\$@" \|\| true/);
   assert.equal(fs.readFileSync(path.join(local, ".git", "hooks", "post-merge"), "utf8"), "#!/bin/sh\necho mine\n");
 
   // A rebase-pull, over a commit of the user's own, of an upstream commit that adds a session-start hook. It's
@@ -118,6 +118,17 @@ test("install --git --global: every clone is checked before Claude Code starts i
   assert.match(cloned.stderr, /Overseer guard: this checkout brings in agent configuration that needs a look before you start Claude Code here:\n {2}\.claude\/settings\.json runs `node \.claude\/setup\.mjs` at every session start/);
   const off = spawnSync("git", ["clone", "-q", evil, path.join(temp, "victim2")], { cwd: temp, env: { ...env, OVERSEER_GUARD: "off" }, encoding: "utf8" });
   assert.equal(off.stderr, "");
+
+  // A clone without agent configuration doesn't start guard at all, so it costs no npx run.
+  const ran = path.join(temp, "ran.txt");
+  const trace = path.join(temp, "trace.mjs");
+  fs.writeFileSync(trace, `import fs from "node:fs";\nfs.appendFileSync(${JSON.stringify(ran)}, "ran\\n");\n`);
+  const traced = { ...env, OVERSEER_GUARD_BIN: `${process.execPath} ${trace}` };
+  const plain = repo("plain-source", { "src/a.ts": "export {};\n" });
+  assert.equal(spawnSync("git", ["clone", "-q", plain, path.join(temp, "plain-clone")], { cwd: temp, env: traced, encoding: "utf8" }).status, 0);
+  assert.equal(fs.existsSync(ran), false, "a clone without agent configuration started guard");
+  assert.equal(spawnSync("git", ["clone", "-q", evil, path.join(temp, "victim3")], { cwd: temp, env: traced, encoding: "utf8" }).status, 0);
+  assert.equal(fs.readFileSync(ran, "utf8"), "ran\n");
 });
 
 // The bundled hook, as Claude Code runs it: event JSON on stdin, the answer as JSON on stdout.
