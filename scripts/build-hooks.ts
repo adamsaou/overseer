@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { build } from "esbuild";
+import { BUNDLE_BANNER } from "../lib/guard.ts";
 
 const root = path.resolve(import.meta.dirname, "..");
 const out = path.join(root, "plugins", "overseer", "scripts", "guard.mjs");
@@ -20,7 +21,7 @@ const result = await build({
   minify: false,
   legalComments: "none",
   logLevel: "warning",
-  banner: { js: "// Built from lib/guard-hook.ts and lib/guard.ts by scripts/build-hooks.ts; edit those, then npm run build:hooks." },
+  banner: { js: `${BUNDLE_BANNER}; edit those, then npm run build:hooks.` },
 });
 const text = result.outputFiles[0].text;
 

@@ -11,13 +11,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-export type Kind = "instructions" | "agent" | "skill" | "command" | "output-style" | "settings" | "mcp" | "hook-script" | "other-agent" | "docs";
+export type Kind = "instructions" | "agent" | "skill" | "command" | "output-style" | "settings" | "mcp" | "hooks" | "plugin" | "hook-script" | "other-agent" | "docs";
 export type Severity = "warn" | "info";
 export type Finding = { rule: RuleId; severity: Severity; line: number; message: string };
 // first: the first scan of this folder, which sets the baseline. new and changed are since the last scan.
 export type Status = "first" | "new" | "changed" | "seen";
-export type Entry = { path: string; kind: Kind; sha256: string; size: number; findings: Finding[]; status: Status };
-export type Scan = { root: string; head: string | null; first: boolean; files: Entry[]; removed: string[]; since?: string };
+// abs is where the file is when path is a key rather than a path under the root, as in a scan of your own setup.
+export type Entry = { path: string; kind: Kind; sha256: string; size: number; findings: Finding[]; status: Status; abs?: string };
+export type Scan = { root: string; head: string | null; first: boolean; files: Entry[]; removed: string[]; since?: string; user?: boolean };
 
 export const RULES = {
   G01: "Hidden characters: zero-width, bidirectional or tag characters that a reader can't see",
@@ -37,13 +38,13 @@ export const RULES = {
 export type RuleId = keyof typeof RULES;
 
 // Bumped when rules change, so files scanned by an older version are linted again.
-const RULES_VERSION = 1;
+const RULES_VERSION = 2;
 const MAX_BYTES = 1 << 20;
 const MAX_FILES = 2000;
 const SKIP_DIRS = new Set(["node_modules", ".git", "vendor", ".venv", "venv", "__pycache__", ".next", ".turbo", ".cache"]);
 const INSTRUCTION_NAMES = new Set(["claude.md", "claude.local.md", "agents.md", "gemini.md", ".cursorrules", ".windsurfrules", ".clinerules"]);
 // Files that run code or reach other machines. A change to one is pointed out even when no rule fires.
-export const RUNS: ReadonlySet<Kind> = new Set(["settings", "mcp", "hook-script", "other-agent"]);
+export const RUNS: ReadonlySet<Kind> = new Set(["settings", "mcp", "hooks", "plugin", "hook-script", "other-agent"]);
 const TEXT: ReadonlySet<Kind> = new Set(["instructions", "agent", "skill", "command", "output-style"]);
 
 // What git lists, so a large repository costs one call: every place a file kindOf knows can be, at any depth,
@@ -632,7 +633,10 @@ function settingsCommands(text: string, json: Record<string, unknown>): Command[
           const when = `${WHEN[event] ?? `on ${event}`}${matcher}`;
           if (hook.type === "http" && typeof hook.url === "string") out.push({ command: "", where: `sends ${event} events to ${hostOf(hook.url)} ${when}`, line: lineOf(text, escaped(hook.url)) });
           const command = commandText(hook);
-          if (command) out.push({ command, where: when, line: lineOf(text, escaped(typeof hook.command === "string" ? hook.command : event)) });
+          // In exec form the last argument tells hooks apart, where the command is often just node.
+          const args = Array.isArray(hook.args) ? hook.args.filter((a): a is string => typeof a === "string") : [];
+          const needle = args.at(-1) ?? (typeof hook.command === "string" ? hook.command : event);
+          if (command) out.push({ command, where: when, line: lineOf(text, escaped(needle)) });
         }
       }
     }
@@ -704,17 +708,22 @@ function envFindings(text: string, env: Record<string, unknown>): Finding[] {
   return findings;
 }
 
-function settingsFindings(text: string, rel: string): Finding[] {
-  let json: unknown;
-  try {
-    json = parseJsonc(text);
-  } catch {
-    return [{ rule: "G02", severity: "info", line: 1, message: "isn't valid JSON, so Claude Code ignores it and guard couldn't read it" }];
+// given is the part of text to read when text holds more than settings, as a plugin's manifest does. rel starts
+// with ~/ for your own settings, which apply in every project and may do what a repository's may not.
+function settingsFindings(text: string, rel: string, given?: Record<string, unknown>): Finding[] {
+  let json: unknown = given;
+  if (!given) {
+    try {
+      json = parseJsonc(text);
+    } catch {
+      return [{ rule: "G02", severity: "info", line: 1, message: "isn't valid JSON, so Claude Code ignores it and guard couldn't read it" }];
+    }
   }
   if (!isObject(json)) return [];
   const findings: Finding[] = [];
   const add = (rule: RuleId, severity: Severity, needle: string, message: string) => findings.push({ rule, severity, line: lineOf(text, needle), message });
   const local = rel.toLowerCase().endsWith("settings.local.json");
+  const user = rel.startsWith("~/");
   for (const c of settingsCommands(text, json)) {
     if (!c.command) {
       findings.push({ rule: "G02", severity: "warn", line: c.line, message: c.where });
@@ -732,7 +741,7 @@ function settingsFindings(text: string, rel: string): Finding[] {
   if (isObject(json.extraKnownMarketplaces)) {
     for (const [name, value] of Object.entries(json.extraKnownMarketplaces)) {
       const source = isObject(value) && isObject(value.source) ? (value.source.repo ?? value.source.url ?? value.source.path ?? value.source.source) : undefined;
-      add("G03", "warn", `"${name}"`, `adds the plugin marketplace ${code(name, 40)}${source ? ` from ${code(String(source), 60)}` : ""}`);
+      add("G03", user ? "info" : "warn", `"${name}"`, `adds the plugin marketplace ${code(name, 40)}${source ? ` from ${code(String(source), 60)}` : ""}`);
     }
   }
   if (isObject(json.enabledPlugins)) {
@@ -746,29 +755,36 @@ function settingsFindings(text: string, rel: string): Finding[] {
   const permissions = isObject(json.permissions) ? json.permissions : {};
   if (Array.isArray(permissions.allow)) {
     const broad = permissions.allow.filter((rule) => typeof rule === "string" && BROAD_TOOLS.test(rule.trim()));
-    if (broad.length) add("G09", "warn", String(broad[0]), `pre-approves ${broad.map((r) => code(String(r), 30)).join(", ")} once the folder is trusted, so Claude Code won't ask first`);
+    if (broad.length) add("G09", "warn", String(broad[0]), `pre-approves ${broad.map((r) => code(String(r), 30)).join(", ")} ${user ? "in every project" : "once the folder is trusted"}, so Claude Code won't ask first`);
   }
   if (permissions.defaultMode === "bypassPermissions" || permissions.defaultMode === "auto") {
-    add("G09", local ? "info" : "warn", "defaultMode", `asks for ${permissions.defaultMode} mode, which Claude Code ignores in project settings since 2.1.257, but shows intent`);
+    if (user) add("G09", permissions.defaultMode === "auto" ? "info" : "warn", "defaultMode", `starts every session in ${permissions.defaultMode} mode`);
+    else add("G09", local ? "info" : "warn", "defaultMode", `asks for ${permissions.defaultMode} mode, which Claude Code ignores in project settings since 2.1.257, but shows intent`);
   }
   if (Array.isArray(permissions.additionalDirectories)) {
     const wide = permissions.additionalDirectories.filter((d) => typeof d === "string" && /^(\/|~\/?|\$HOME\/?|[A-Za-z]:\\?)$|^(~|\/home|\/Users|\$HOME)\/[^/]*\/?$/.test(d.trim()));
     if (wide.length) add("G09", "warn", String(wide[0]), `gives Claude access to ${wide.map((d) => code(String(d), 30)).join(", ")} (additionalDirectories)`);
   }
-  if (json.skipDangerousModePermissionPrompt === true) add("G09", local ? "info" : "warn", "skipDangerousModePermissionPrompt", "asks to skip the bypass-mode warning, which Claude Code ignores outside user settings, but shows intent");
+  if (json.skipDangerousModePermissionPrompt === true) {
+    add("G09", local || user ? "info" : "warn", "skipDangerousModePermissionPrompt", user ? "skips the warning before bypass mode" : "asks to skip the bypass-mode warning, which Claude Code ignores outside user settings, but shows intent");
+  }
   if (isObject(json.sandbox) && json.sandbox.enabled === false) add("G09", "info", "sandbox", "turns the Bash sandbox off");
   if (typeof json.agent === "string" && json.agent) add("G04", "warn", `"agent"`, `runs the whole session as the agent ${code(json.agent, 40)}, with that agent's prompt, tools and model`);
-  if (typeof json.model === "string" && json.model) add("G04", WEAK_MODEL.test(json.model) ? "warn" : "info", `"model"`, `sets the session's model to ${code(json.model, 40)}`);
-  if (!findings.some((f) => f.rule === "G12")) findings.push(...secretFindings(text));
+  if (typeof json.model === "string" && json.model) add("G04", WEAK_MODEL.test(json.model) && !user ? "warn" : "info", `"model"`, `sets the session's model to ${code(json.model, 40)}`);
+  if (!given && !findings.some((f) => f.rule === "G12")) findings.push(...secretFindings(text));
   return findings;
 }
 
-function mcpFindings(text: string): Finding[] {
-  let json: unknown;
-  try {
-    json = parseJsonc(text);
-  } catch {
-    return [{ rule: "G03", severity: "info", line: 1, message: "isn't valid JSON, so guard couldn't read its servers" }];
+// given is the part of text to read, as for settingsFindings: the servers ~/.claude.json or a plugin declares.
+// rel says where they live: a repository's .mcp.json, or your own setup, where they start in every session.
+function mcpFindings(text: string, rel: string, given?: Record<string, unknown>): Finding[] {
+  let json: unknown = given;
+  if (!given) {
+    try {
+      json = parseJsonc(text);
+    } catch {
+      return [{ rule: "G03", severity: "info", line: 1, message: "isn't valid JSON, so guard couldn't read its servers" }];
+    }
   }
   const servers = isObject(json) && isObject(json.mcpServers) ? json.mcpServers : {};
   const findings: Finding[] = [];
@@ -777,9 +793,10 @@ function mcpFindings(text: string): Finding[] {
     const line = lineOf(text, `"${name}"`);
     const command = commandText(server);
     if (command) {
-      findings.push({ rule: "G03", severity: "info", line, message: `starts the MCP server ${code(name, 40)}: ${cmd(command)}, which claude -p and SDK sessions connect without asking` });
+      const when = rel.startsWith("~/") || rel.startsWith("plugins/") ? "in every session" : "which claude -p and SDK sessions connect without asking";
+      findings.push({ rule: "G03", severity: "info", line, message: `starts the MCP server ${code(name, 40)}: ${cmd(command)}, ${when}` });
       for (const hit of commandHits(command, "command")) findings.push({ rule: hit.rule, severity: hit.severity, line, message: hit.message });
-    } else if (typeof server.url === "string") {
+    } else if (typeof server.url === "string" && server.url) {
       findings.push({ rule: "G03", severity: "info", line, message: `connects the MCP server ${code(name, 40)} to ${hostOf(server.url)}` });
     }
     const helper = server.headersHelper;
@@ -792,7 +809,34 @@ function mcpFindings(text: string): Finding[] {
       }
     }
   }
-  if (!findings.some((f) => f.rule === "G12")) findings.push(...secretFindings(text));
+  if (!given && !findings.some((f) => f.rule === "G12")) findings.push(...secretFindings(text));
+  return findings;
+}
+
+// A plugin's manifest, its .lsp.json, or its entry in a marketplace.json: the hooks, MCP servers and language
+// servers it declares in place. given is this plugin's part when text holds more, as a marketplace.json does.
+function pluginFindings(text: string, rel: string, given?: Record<string, unknown>): Finding[] {
+  let json = given;
+  if (!json) {
+    try {
+      const parsed = parseJsonc(text);
+      json = isObject(parsed) ? parsed : {};
+    } catch {
+      return [{ rule: "G03", severity: "info", line: 1, message: "isn't valid JSON, so guard couldn't read it" }];
+    }
+    if (rel.toLowerCase().endsWith(".lsp.json") && !isObject(json.lspServers)) json = { lspServers: json };
+  }
+  const findings: Finding[] = [];
+  if (isObject(json.hooks)) findings.push(...settingsFindings(text, rel, { hooks: json.hooks }));
+  if (isObject(json.mcpServers)) findings.push(...mcpFindings(text, rel, { mcpServers: json.mcpServers }));
+  for (const [name, server] of Object.entries(isObject(json.lspServers) ? json.lspServers : {})) {
+    const command = isObject(server) ? commandText(server) : "";
+    if (!command) continue;
+    const line = lineOf(text, `"${name}"`);
+    findings.push({ rule: "G03", severity: "info", line, message: `starts the language server ${code(name, 40)}: ${cmd(command)}, for the files it handles` });
+    for (const hit of commandHits(command, "command")) findings.push({ rule: hit.rule, severity: hit.severity, line, message: hit.message });
+  }
+  if (!given) findings.push(...secretFindings(text));
   return findings;
 }
 
@@ -842,7 +886,7 @@ function otherAgentFindings(text: string, file: string): Finding[] {
 function scriptsRun(root: string, commands: string[]): string[] {
   const found = new Set<string>();
   for (const command of commands) {
-    const relative = command.replace(/["']?\$\{?(CLAUDE_PROJECT_DIR|PWD)\}?["']?\//g, "./");
+    const relative = command.replace(/["']?\$\{?(CLAUDE_PROJECT_DIR|CLAUDE_PLUGIN_ROOT|PWD)\}?["']?\//g, "./");
     for (const token of relative.split(/[\s"'`;&|()<>]+/)) {
       const cleaned = token.replace(/^\.\//, "");
       if (!cleaned || cleaned.startsWith("-") || cleaned.includes("$") || !/[/.]/.test(cleaned) || /^[a-z]+:\/\//i.test(cleaned)) continue;
@@ -873,8 +917,9 @@ export function lint(text: string, kind: Kind, rel: string): Finding[] {
   const findings = kind === "hook-script" ? [] : hiddenCharacters(text);
   if (TEXT.has(kind)) findings.push(...textFindings(text, kind), ...secretFindings(text));
   else if (kind === "docs") findings.push(...docsFindings(text));
-  else if (kind === "settings") findings.push(...settingsFindings(text, rel));
-  else if (kind === "mcp") findings.push(...mcpFindings(text));
+  else if (kind === "settings" || kind === "hooks") findings.push(...settingsFindings(text, rel));
+  else if (kind === "mcp") findings.push(...mcpFindings(text, rel));
+  else if (kind === "plugin") findings.push(...pluginFindings(text, rel));
   else if (kind === "other-agent") findings.push(...otherAgentFindings(text, rel), ...secretFindings(text));
   else if (kind === "hook-script") {
     for (const hit of commandHits(text, "command")) findings.push({ rule: hit.rule, severity: hit.severity, line: lineAt(text, hit.index), message: hit.message });
@@ -926,7 +971,7 @@ function writePrivate(file: string, data: string, append = false) {
 // files whose warnings the user has been shown, so each version of a file is pointed out once.
 export function saveState(scan: Scan, previous: RepoState | null, alerted: Set<string>, by: string, version: string) {
   const files: Record<string, FileState> = {};
-  const stats = new Map(scan.files.map((e) => [e.path, statOf(path.join(scan.root, e.path))]));
+  const stats = new Map(scan.files.map((e) => [e.path, statOf(e.abs ?? path.join(scan.root, e.path))]));
   for (const e of scan.files) {
     const before = previous?.files[e.path];
     const stat = stats.get(e.path);
@@ -968,9 +1013,11 @@ export type ScanOptions = { since?: string; previous?: RepoState | null };
 export class GuardError extends Error {}
 
 // Reads one file of the inventory: its hash and findings, reusing the last scan's when its size and time are
-// the same and the rules haven't changed.
-function entryOf(root: string, rel: string, kind: Kind, previous: RepoState | null): Omit<Entry, "status"> | null {
+// the same and the rules haven't changed. key is the file's name in the inventory when that isn't rel, as in a
+// scan of your own setup, where links are followed: dotfiles are often linked in from elsewhere.
+function entryOf(root: string, rel: string, kind: Kind, previous: RepoState | null, key = rel): Omit<Entry, "status"> | null {
   const abs = path.join(root, rel);
+  const where = key === rel ? {} : { abs };
   let lstat: fs.Stats;
   try {
     lstat = fs.lstatSync(abs);
@@ -978,7 +1025,7 @@ function entryOf(root: string, rel: string, kind: Kind, previous: RepoState | nu
     return null;
   }
   const findings: Finding[] = [];
-  if (lstat.isSymbolicLink()) {
+  if (key === rel && lstat.isSymbolicLink()) {
     let target: string;
     try {
       target = fs.realpathSync(abs);
@@ -993,14 +1040,14 @@ function entryOf(root: string, rel: string, kind: Kind, previous: RepoState | nu
   }
   const stat = statOf(abs);
   if (!stat?.isFile()) return null;
-  const cached = previous?.rules === RULES_VERSION ? previous.files[rel] : undefined;
-  if (cached && cached.kind === kind && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) return { path: rel, kind, sha256: cached.sha256, size: stat.size, findings: cached.findings };
+  const cached = previous?.rules === RULES_VERSION ? previous.files[key] : undefined;
+  if (cached && cached.kind === kind && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) return { path: key, kind, sha256: cached.sha256, size: stat.size, findings: cached.findings, ...where };
   if (stat.size > MAX_BYTES) {
-    return { path: rel, kind, sha256: sha256(`size:${stat.size}:${stat.mtimeMs}`), size: stat.size, findings: [{ rule: "G01", severity: "info", line: 1, message: `is over ${MAX_BYTES >> 20} MB, so guard didn't read it` }] };
+    return { path: key, kind, sha256: sha256(`size:${stat.size}:${stat.mtimeMs}`), size: stat.size, findings: [{ rule: "G01", severity: "info", line: 1, message: `is over ${MAX_BYTES >> 20} MB, so guard didn't read it` }], ...where };
   }
   const data = fs.readFileSync(abs);
-  findings.push(...lint(data.toString("utf8"), kind, rel));
-  return { path: rel, kind, sha256: sha256(data), size: stat.size, findings };
+  findings.push(...lint(data.toString("utf8"), kind, key));
+  return { path: key, kind, sha256: sha256(data), size: stat.size, findings, ...where };
 }
 
 // Every file Claude Code acts on in the folder, with what the rules say about each, and its status against the
@@ -1098,11 +1145,14 @@ const KIND_LABEL: Record<Kind, string> = {
   "output-style": "output style",
   settings: "settings",
   mcp: "MCP servers",
+  hooks: "hooks",
+  plugin: "plugin manifest",
   "hook-script": "run by a hook or MCP server",
   "other-agent": "another tool's config",
   docs: "docs",
 };
-export const kindLabel = (e: Entry) => (e.kind === "settings" && e.path.toLowerCase().endsWith("settings.local.json") ? "local settings" : KIND_LABEL[e.kind]);
+export const kindLabel = (e: Entry) =>
+  e.kind === "settings" && e.path.toLowerCase().endsWith("settings.local.json") ? "local settings" : e.path.includes("/marketplace.json#") ? "marketplace entry" : KIND_LABEL[e.kind];
 
 // What needs pointing out at session start: files with warnings not shown before in this version, and, after
 // the first scan, new or changed files that run code: a script a hook runs, or settings and MCP servers that
@@ -1131,13 +1181,22 @@ export function describe(e: Entry, before?: Finding[]): string {
 export function sessionNotes(scan: Scan, points: Entry[], previous: RepoState | null = null): { user?: string; claude?: string } {
   if (!points.length) return {};
   const total = scan.files.filter((e) => e.kind !== "docs").length;
-  const lines = points.map((e) => describe(e, previous?.files[e.path]?.findings));
-  const user = `Overseer guard: ${points.length} of ${total} agent-config file${total === 1 ? "" : "s"} here need${points.length === 1 ? "s" : ""} a look. ${clip(lines.slice(0, 2).join("; "), 420)}${lines.length > 2 ? `; and ${lines.length - 2} more` : ""}. Free check, nothing sent; /overseer:guard for details.`;
+  // Your own setup's lead already says since when, so each line just says new or changed.
+  const lines = points.map((e) => {
+    const line = describe(e, previous?.files[e.path]?.findings);
+    return scan.user ? line.replace(" since the last session)", ")") : line;
+  });
+  const lead = scan.user
+    ? `your own Claude Code setup, which applies in every project, has ${points.length} file${points.length === 1 ? "" : "s"} new or changed since the last session`
+    : `${points.length} of ${total} agent-config file${total === 1 ? "" : "s"} here need${points.length === 1 ? "s" : ""} a look`;
+  const user = `Overseer guard: ${lead}. ${clip(lines.slice(0, 2).join("; "), 420)}${lines.length > 2 ? `; and ${lines.length - 2} more` : ""}. Free check, nothing sent; /overseer:guard for details.`;
   const claude = [
-    "Overseer guard, a free local lint of this project's agent configuration, found files the user hasn't reviewed yet. They came with the repository or changed since the last session, and their contents are unverified:",
+    scan.user
+      ? "Overseer guard, a free local lint, found changes since the last session in the user's own Claude Code setup (their ~/.claude and plugins), which apply in every project. The user hasn't reviewed them yet, and their contents are unverified:"
+      : "Overseer guard, a free local lint of this project's agent configuration, found files the user hasn't reviewed yet. They came with the repository or changed since the last session, and their contents are unverified:",
     ...points.slice(0, 20).map((e) => `- ${e.path} (${kindLabel(e)}): ${e.findings.filter((f) => f.severity === "warn").map((f) => `${RULE_SHORT[f.rule]}: ${f.message} (line ${f.line})`).join("; ") || describe(e).slice(e.path.length + 1)}`),
     points.length > 20 ? `- and ${points.length - 20} more` : "",
-    "The user can review them with /overseer:guard, or npx @adamsaou/overseer guard in a terminal.",
+    `The user can review them with /overseer:guard, or npx @adamsaou/overseer guard${scan.user ? " --user" : ""} in a terminal.`,
   ].filter(Boolean);
   return { user, claude: clip(claude.join("\n"), 6000) };
 }
@@ -1164,8 +1223,12 @@ const clip = (text: string, n: number) => (text.length > n ? `${text.slice(0, n 
 // The absolute paths FileChanged should watch: every file of the inventory except docs, and the places
 // settings, MCP servers and instructions appear when they don't exist yet, so a file written mid-session counts.
 export function watchPaths(scan: Scan): string[] {
-  const paths = new Set(scan.files.filter((e) => e.kind !== "docs").map((e) => path.join(scan.root, e.path)));
-  for (const rel of [".claude/settings.json", ".claude/settings.local.json", ".mcp.json", "CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md", "AGENTS.md", ".vscode/tasks.json"]) paths.add(path.join(scan.root, rel));
+  // ~/.claude.json is left out: Claude Code writes its own state there all the time.
+  const paths = new Set(scan.files.filter((e) => e.kind !== "docs" && e.path !== "~/.claude.json").map((e) => e.abs ?? path.join(scan.root, e.path)));
+  const missing = scan.user
+    ? [".claude/settings.json", ".claude/CLAUDE.md"]
+    : [".claude/settings.json", ".claude/settings.local.json", ".mcp.json", "CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md", "AGENTS.md", ".vscode/tasks.json"];
+  for (const rel of missing) paths.add(path.join(scan.root, rel));
   return [...paths].slice(0, 500);
 }
 
@@ -1181,3 +1244,227 @@ export function projectFolder(dir: string): string | null {
   if (real === path.parse(real).root || real === fs.realpathSync(os.homedir())) return null;
   return statOf(real)?.isDirectory() ? real : null;
 }
+
+// ---- Your own setup: what steers Claude Code in every project
+
+// The folders under ~/.claude that hold agents, commands, rules, output styles and skills.
+const USER_DIRS = ["agents", "commands", "rules", "output-styles", "skills"];
+// The first line of the plugin's bundled hook, which scripts/build-hooks.ts writes.
+export const BUNDLE_BANNER = "// Built from lib/guard-hook.ts and lib/guard.ts by scripts/build-hooks.ts";
+
+function startsWith(file: string, text: string): boolean {
+  try {
+    const fd = fs.openSync(file, "r");
+    try {
+      const head = Buffer.alloc(text.length);
+      fs.readSync(fd, head, 0, text.length, 0);
+      return head.toString("utf8") === text;
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return false;
+  }
+}
+
+export const userRoot = () => fs.realpathSync(os.homedir());
+
+function readJson(file: string, max = MAX_BYTES): { text: string; json: Record<string, unknown> } | null {
+  try {
+    if ((statOf(file)?.size ?? Infinity) > max) return null;
+    const text = fs.readFileSync(file, "utf8");
+    const json = parseJsonc(text);
+    return isObject(json) ? { text, json } : null;
+  } catch {
+    return null;
+  }
+}
+
+const subdirs = (dir: string) => {
+  try {
+    return fs
+      .readdirSync(dir, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => ({ name: d.name, path: path.join(dir, d.name) }));
+  } catch {
+    return [];
+  }
+};
+
+// The kind of a file in a plugin, by its place there: hooks/hooks.json, .mcp.json, .lsp.json, the manifest, a
+// root settings.json, and agents, commands, output styles and skills where Claude Code looks for them.
+function pluginKindOf(rel: string): Kind | null {
+  const lower = rel.toLowerCase();
+  if (lower === "hooks/hooks.json") return "hooks";
+  if (lower === ".mcp.json") return "mcp";
+  if (lower === ".lsp.json" || lower === ".claude-plugin/plugin.json") return "plugin";
+  if (lower === "settings.json") return "settings";
+  const kind = kindOf(`.claude/${rel}`);
+  return kind === "agent" || kind === "command" || kind === "output-style" || kind === "skill" ? kind : null;
+}
+
+function pluginFiles(root: string): string[] {
+  const out: string[] = [];
+  const visit = (rel: string, depth: number) => {
+    if (depth > 5 || out.length >= 500) return;
+    let list: fs.Dirent[];
+    try {
+      list = fs.readdirSync(path.join(root, rel), { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const d of list) {
+      const child = rel ? `${rel}/${d.name}` : d.name;
+      if (d.isDirectory()) {
+        if (!SKIP_DIRS.has(d.name) && d.name !== ".in_use") visit(child, depth + 1);
+      } else if (d.isFile() && pluginKindOf(child)) {
+        out.push(child);
+      }
+    }
+  };
+  visit("", 0);
+  return out.sort();
+}
+
+// Every command hooks, MCP servers and language servers declared in a file have Claude Code run.
+function declaredCommands(json: Record<string, unknown>): string[] {
+  const out = isObject(json.hooks) ? settingsCommands("", { hooks: json.hooks }).map((c) => c.command) : [];
+  for (const servers of [json.mcpServers, json.lspServers]) {
+    if (isObject(servers)) for (const server of Object.values(servers)) if (isObject(server)) out.push(commandText(server));
+  }
+  return out.filter(Boolean);
+}
+
+// The plugins Claude Code loads for you: those installed for you and turned on in your settings, and those an
+// organization syncs from claude.ai, which are on wherever its members sign in.
+function userPlugins(home: string, settings: Record<string, unknown>): { id: string; root: string }[] {
+  const dir = path.join(home, ".claude", "plugins");
+  const enabled = isObject(settings.enabledPlugins) ? settings.enabledPlugins : {};
+  const installed = readJson(path.join(dir, "installed_plugins.json"))?.json;
+  const plugins: { id: string; root: string }[] = [];
+  for (const [id, installs] of Object.entries(isObject(installed?.plugins) ? installed.plugins : {})) {
+    const mine = enabled[id] === true && Array.isArray(installs) ? installs.find((i) => isObject(i) && i.scope === "user" && typeof i.installPath === "string") : undefined;
+    if (isObject(mine)) plugins.push({ id, root: String(mine.installPath) });
+  }
+  for (const org of subdirs(path.join(dir, "synced"))) {
+    for (const plugin of subdirs(org.path)) plugins.push({ id: `${plugin.name.replace(/~g\d+$/, "")}@claude.ai`, root: plugin.path });
+  }
+  return plugins;
+}
+
+// What steers Claude Code wherever it runs: ~/.claude's settings, instructions, agents, commands, rules and
+// skills; the MCP servers in ~/.claude.json, which claude mcp add --scope user writes; each plugin Claude Code
+// loads for you, with its hooks, MCP and language servers, agents, commands and skills, and what its marketplace
+// entry declares for it; and the scripts all of those run. Each path is a key that stays the same across
+// versions, such as ~/.claude/settings.json or plugins/name@marketplace/hooks/hooks.json, so an update reads as
+// a change.
+export function scanUser(options: { home?: string; previous?: RepoState | null } = {}): Scan {
+  const home = fs.realpathSync(options.home ?? os.homedir());
+  const previous = options.previous === undefined ? loadState(home) : options.previous;
+  const entries: Omit<Entry, "status">[] = [];
+  const keys = new Set<string>();
+  const add = (root: string, rel: string, kind: Kind, key: string) => {
+    if (keys.has(key)) return null;
+    keys.add(key);
+    const entry = entryOf(root, rel, kind, previous, key);
+    if (entry) entries.push(entry);
+    return entry;
+  };
+  // A part of a bigger file, hashed on its own, so a change elsewhere in that file isn't a change to it.
+  const part = (key: string, kind: Kind, abs: string, value: unknown, findings: Finding[]) => {
+    const text = JSON.stringify(value);
+    keys.add(key);
+    entries.push({ path: key, kind, sha256: sha256(text), size: text.length, findings, abs });
+  };
+
+  const found = new Set<string>();
+  for (const rel of [".claude/settings.json", ".claude/CLAUDE.md"]) if (statOf(path.join(home, rel))?.isFile()) found.add(rel);
+  for (const dir of USER_DIRS) walk(home, `.claude/${dir}`, 3, found, { dirs: 0 });
+  for (const rel of [...found].sort()) add(home, rel, kindOf(rel)!, `~/${rel}`);
+  const settings = readJson(path.join(home, ".claude", "settings.json"))?.json ?? {};
+  const commands = settingsCommands("", settings).map((c) => c.command);
+
+  // ~/.claude.json holds Claude Code's own state too, so only its mcpServers are read and hashed. When it doesn't
+  // parse, Claude Code was writing it, and what the last scan saw stands.
+  const state = path.join(home, ".claude.json");
+  const config = readJson(state, 64 << 20);
+  const servers = config && isObject(config.json.mcpServers) ? config.json.mcpServers : {};
+  if (config && Object.keys(servers).length) {
+    part("~/.claude.json", "mcp", state, servers, mcpFindings(config.text, "~/.claude.json", { mcpServers: servers }));
+    commands.push(...declaredCommands({ mcpServers: servers }));
+  } else if (!config && statOf(state) && previous?.files["~/.claude.json"]) {
+    const before = previous.files["~/.claude.json"];
+    keys.add("~/.claude.json");
+    entries.push({ path: "~/.claude.json", kind: before.kind, sha256: before.sha256, size: before.size, findings: before.findings, abs: state });
+  }
+
+  // The scripts ~/.claude's hooks and helper commands run, written as ~/, $HOME/ or a full path.
+  for (const rel of scriptsRun(home, commands.map((c) => c.replace(/(^|[\s"'=])(?:~|\$HOME|\$\{HOME\})\//g, "$1./")))) add(home, rel, "hook-script", `~/${rel}`);
+  const queue = entries.filter((e) => e.kind === "instructions").map((e) => ({ rel: e.path.slice(2), depth: 0 }));
+  while (queue.length) {
+    const { rel, depth } = queue.shift()!;
+    let text: string;
+    try {
+      text = fs.readFileSync(path.join(home, rel), "utf8");
+    } catch {
+      continue;
+    }
+    for (const target of depth < 5 ? imports(text) : []) {
+      const imported = posix(path.relative(home, path.resolve(home, path.posix.dirname(rel), target)));
+      if (imported.startsWith("..") || path.isAbsolute(imported)) continue;
+      if (add(home, imported, "instructions", `~/${imported}`)) queue.push({ rel: imported, depth: depth + 1 });
+    }
+  }
+
+  const marketplaces = readJson(path.join(home, ".claude", "plugins", "known_marketplaces.json"))?.json ?? {};
+  for (const { id, root } of userPlugins(home, settings)) {
+    const base = `plugins/${id}`;
+    const kinds = new Map<string, Kind>(pluginFiles(root).map((rel) => [rel, pluginKindOf(rel)!]));
+    // Hook and MCP files the manifest names, besides the usual places.
+    const manifest = readJson(path.join(root, ".claude-plugin", "plugin.json"))?.json ?? {};
+    for (const [field, kind] of [["hooks", "hooks"], ["mcpServers", "mcp"]] as const) {
+      for (const named of [manifest[field]].flat()) {
+        if (typeof named !== "string") continue;
+        const rel = posix(path.relative(root, path.resolve(root, named)));
+        if (!rel.startsWith("..") && !path.isAbsolute(rel)) kinds.set(rel, kind);
+      }
+    }
+    const run: string[] = [];
+    for (const [rel, kind] of kinds) {
+      add(root, rel, kind, `${base}/${rel}`);
+      const json = kind === "hooks" || kind === "mcp" || kind === "plugin" ? readJson(path.join(root, rel))?.json : undefined;
+      if (json) run.push(...declaredCommands(rel.toLowerCase().endsWith(".lsp.json") && !isObject(json.lspServers) ? { lspServers: json } : json));
+    }
+    // A marketplace entry with "strict": false declares the plugin's parts itself, such as its language server.
+    const at = id.lastIndexOf("@");
+    const market = marketplaces[id.slice(at + 1)];
+    const location = isObject(market) && typeof market.installLocation === "string" ? market.installLocation : null;
+    const file = location ? path.join(location, ".claude-plugin", "marketplace.json") : null;
+    const listing = file ? readJson(file, 16 << 20) : null;
+    const listed = listing && Array.isArray(listing.json.plugins) ? listing.json.plugins : [];
+    const entry = listed.find((p) => isObject(p) && p.name === id.slice(0, at));
+    if (file && listing && isObject(entry)) {
+      const declared = Object.fromEntries(["hooks", "mcpServers", "lspServers"].filter((k) => isObject(entry[k])).map((k) => [k, entry[k]]));
+      if (Object.keys(declared).length) {
+        part(`${base}/marketplace.json#${id.slice(0, at)}`, "plugin", file, declared, pluginFindings(listing.text, `${base}/marketplace.json`, declared));
+        run.push(...declaredCommands(declared));
+      }
+    }
+    for (const rel of scriptsRun(root, run)) {
+      const entry = add(root, rel, "hook-script", `${base}/${rel}`);
+      // Overseer's own hook holds guard's rules, the very patterns guard looks for, so its text isn't linted. A
+      // change to it is still pointed out, and its plugin's hooks are checked like any other's.
+      if (entry && id.startsWith("overseer@") && rel === "scripts/guard.mjs" && startsWith(path.join(root, rel), BUNDLE_BANNER)) entry.findings = [];
+    }
+  }
+
+  const files = entries.map((e): Entry => {
+    const before = previous?.files[e.path];
+    return { ...e, status: !previous ? "first" : !before ? "new" : before.sha256 !== e.sha256 ? "changed" : "seen" };
+  });
+  const removed = previous ? Object.keys(previous.files).filter((key) => !keys.has(key)) : [];
+  return { root: home, head: null, first: !previous, files: files.sort((a, b) => a.path.localeCompare(b.path)), removed, user: true };
+}
+
+// How many plugins a scan of your own setup read.
+export const pluginsIn = (scan: Scan) => new Set(scan.files.map((e) => /^plugins\/([^/]+)\//.exec(e.path)?.[1]).filter(Boolean)).size;

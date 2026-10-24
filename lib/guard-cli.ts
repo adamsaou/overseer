@@ -8,9 +8,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
-import { GuardError, PATHSPECS, RULES, kindLabel, loadState, projectFolder, ruleShort, scanRepo, warnings, type Entry, type Scan } from "./guard.ts";
+import { GuardError, PATHSPECS, RULES, kindLabel, loadState, pluginsIn, projectFolder, ruleShort, scanRepo, scanUser, userRoot, warnings, type Entry, type Scan } from "./guard.ts";
 
 export const GUARD_HELP = `Usage: overseer guard [folder] [options]
+       overseer guard --user [options]
        overseer guard install --git [--global]
 
 Lists the files in a repository that steer Claude Code: CLAUDE.md and AGENTS.md files, agents, skills,
@@ -22,6 +23,9 @@ sends nothing anywhere. A clean result means none of its patterns matched, not t
 overseer check tests what instructions make a model do.
 
 Options
+  --user            check your own setup instead, which applies in every project: ~/.claude's settings,
+                    instructions, agents, commands and skills, the MCP servers in ~/.claude.json, and each
+                    plugin Claude Code loads for you, with what its hooks and servers run
   --since <ref>     only files that changed between this git ref and HEAD, such as a pull request's base
   --all             list every file with its notes, not just the flagged ones
   --json            print the report as JSON
@@ -82,6 +86,7 @@ function options(argv: string[]) {
       allowPositionals: true,
       options: {
         since: { type: "string" },
+        user: { type: "boolean", default: false },
         all: { type: "boolean", default: false },
         json: { type: "boolean", default: false },
         github: { type: "boolean", default: false },
@@ -99,13 +104,25 @@ function run(argv: string[]): number {
   const { values, positionals } = options(argv);
   if (values.git || values.global) throw new Usage("--git and --global go with install: overseer guard install --git");
   if (values["git-hook"] !== undefined) return gitHook(values["git-hook"], positionals);
-  if (positionals.length > 1) throw new Usage(`takes one folder, not ${positionals.length}: ${positionals.join(" ")}`);
-  const given = path.resolve(positionals[0] ?? ".");
-  const root = projectFolder(given);
-  if (!root) throw new Usage(fs.existsSync(given) ? `scans a project's folder, and ${tilde(given)} is your home folder or the filesystem's root, which would read far beyond one project.` : `${tilde(given)} doesn't exist.`);
-  const since = values.since?.trim();
-  if (values.since !== undefined && !since) throw new Usage("--since takes a git ref, such as origin/main.");
-  const scan = scanRepo(root, { since, previous: since ? null : loadState(root) });
+  let scan: Scan;
+  if (values.user) {
+    if (positionals.length || values.since !== undefined || values.github) throw new Usage("--user checks your own setup, ~/.claude and your plugins, so it takes no folder, --since or --github.");
+    scan = scanUser({ previous: loadState(userRoot()) });
+  } else {
+    if (positionals.length > 1) throw new Usage(`takes one folder, not ${positionals.length}: ${positionals.join(" ")}`);
+    const given = path.resolve(positionals[0] ?? ".");
+    const root = projectFolder(given);
+    if (!root) {
+      throw new Usage(
+        fs.existsSync(given)
+          ? `scans a project's folder, and ${tilde(given)} is your home folder or the filesystem's root, which would read far beyond one project. --user checks your own setup.`
+          : `${tilde(given)} doesn't exist.`,
+      );
+    }
+    const since = values.since?.trim();
+    if (values.since !== undefined && !since) throw new Usage("--since takes a git ref, such as origin/main.");
+    scan = scanRepo(root, { since, previous: since ? null : loadState(root) });
+  }
   const flagged = scan.files.filter((e) => warnings(e).length);
   if (values.json) console.log(JSON.stringify({ root: scan.root, head: scan.head, since: scan.since ?? null, flagged: flagged.length, files: scan.files, removed: scan.removed }, null, 2));
   else console.log(report(scan, flagged, values.all, tty));
@@ -119,11 +136,21 @@ export function guardReport(root: string, since?: string, all = false): string {
   return report(scan, scan.files.filter((e) => warnings(e).length), all, false);
 }
 
+// The same for your own setup: ~/.claude and your plugins.
+export function guardUserReport(all = false): string {
+  const scan = scanUser({ previous: loadState(userRoot()) });
+  return report(scan, scan.files.filter((e) => warnings(e).length), all, false);
+}
+
 function report(scan: Scan, flagged: Entry[], all: boolean, color: boolean): string {
   const { red, dim, bold } = styles(color);
   const config = scan.files.filter((e) => e.kind !== "docs");
   const docs = scan.files.length - config.length;
-  const where = scan.since ? `changed since ${scan.since}` : `in ${tilde(scan.root)}`;
+  const where = scan.user
+    ? `in your own Claude Code setup, from ~/.claude and ${plural(pluginsIn(scan), "plugin")}`
+    : scan.since
+      ? `changed since ${scan.since}`
+      : `in ${tilde(scan.root)}`;
   const lines = [
     `${bold("Overseer guard")}: ${plural(config.length, "agent-config file")} ${where}${docs ? `, and ${plural(docs, "doc")} checked for hidden text` : ""}. ${flagged.length ? red(`${flagged.length} flagged.`) : "Nothing flagged."}`,
   ];
@@ -146,7 +173,9 @@ function report(scan: Scan, flagged: Entry[], all: boolean, color: boolean): str
     "",
     dim(
       flagged.length
-        ? "Free and local: nothing was sent anywhere. Read each flagged file before you start Claude Code here. For instructions that might carry an agenda, overseer check tests what they make a model do."
+        ? scan.user
+          ? "Free and local: nothing was sent anywhere. These apply in every project: check that each flagged file is something you installed or wrote, and that it does what you expect."
+          : "Free and local: nothing was sent anywhere. Read each flagged file before you start Claude Code here. For instructions that might carry an agenda, overseer check tests what they make a model do."
         : "Free and local: nothing was sent anywhere. Nothing matched, which isn't proof the files are safe.",
     ),
   );

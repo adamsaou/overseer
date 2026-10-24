@@ -10,12 +10,12 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-var RULES_VERSION = 1;
+var RULES_VERSION = 2;
 var MAX_BYTES = 1 << 20;
 var MAX_FILES = 2e3;
 var SKIP_DIRS = /* @__PURE__ */ new Set(["node_modules", ".git", "vendor", ".venv", "venv", "__pycache__", ".next", ".turbo", ".cache"]);
 var INSTRUCTION_NAMES = /* @__PURE__ */ new Set(["claude.md", "claude.local.md", "agents.md", "gemini.md", ".cursorrules", ".windsurfrules", ".clinerules"]);
-var RUNS = /* @__PURE__ */ new Set(["settings", "mcp", "hook-script", "other-agent"]);
+var RUNS = /* @__PURE__ */ new Set(["settings", "mcp", "hooks", "plugin", "hook-script", "other-agent"]);
 var TEXT = /* @__PURE__ */ new Set(["instructions", "agent", "skill", "command", "output-style"]);
 var PATHSPECS = [
   "**/CLAUDE.md",
@@ -471,7 +471,9 @@ function settingsCommands(text, json) {
           const when = `${WHEN[event] ?? `on ${event}`}${matcher}`;
           if (hook.type === "http" && typeof hook.url === "string") out.push({ command: "", where: `sends ${event} events to ${hostOf(hook.url)} ${when}`, line: lineOf(text, escaped(hook.url)) });
           const command = commandText(hook);
-          if (command) out.push({ command, where: when, line: lineOf(text, escaped(typeof hook.command === "string" ? hook.command : event)) });
+          const args = Array.isArray(hook.args) ? hook.args.filter((a) => typeof a === "string") : [];
+          const needle = args.at(-1) ?? (typeof hook.command === "string" ? hook.command : event);
+          if (command) out.push({ command, where: when, line: lineOf(text, escaped(needle)) });
         }
       }
     }
@@ -535,17 +537,20 @@ function envFindings(text, env) {
   }
   return findings;
 }
-function settingsFindings(text, rel) {
-  let json;
-  try {
-    json = parseJsonc(text);
-  } catch {
-    return [{ rule: "G02", severity: "info", line: 1, message: "isn't valid JSON, so Claude Code ignores it and guard couldn't read it" }];
+function settingsFindings(text, rel, given) {
+  let json = given;
+  if (!given) {
+    try {
+      json = parseJsonc(text);
+    } catch {
+      return [{ rule: "G02", severity: "info", line: 1, message: "isn't valid JSON, so Claude Code ignores it and guard couldn't read it" }];
+    }
   }
   if (!isObject(json)) return [];
   const findings = [];
   const add = (rule, severity, needle, message) => findings.push({ rule, severity, line: lineOf(text, needle), message });
   const local = rel.toLowerCase().endsWith("settings.local.json");
+  const user = rel.startsWith("~/");
   for (const c of settingsCommands(text, json)) {
     if (!c.command) {
       findings.push({ rule: "G02", severity: "warn", line: c.line, message: c.where });
@@ -562,7 +567,7 @@ function settingsFindings(text, rel) {
   if (isObject(json.extraKnownMarketplaces)) {
     for (const [name, value] of Object.entries(json.extraKnownMarketplaces)) {
       const source = isObject(value) && isObject(value.source) ? value.source.repo ?? value.source.url ?? value.source.path ?? value.source.source : void 0;
-      add("G03", "warn", `"${name}"`, `adds the plugin marketplace ${code(name, 40)}${source ? ` from ${code(String(source), 60)}` : ""}`);
+      add("G03", user ? "info" : "warn", `"${name}"`, `adds the plugin marketplace ${code(name, 40)}${source ? ` from ${code(String(source), 60)}` : ""}`);
     }
   }
   if (isObject(json.enabledPlugins)) {
@@ -575,28 +580,33 @@ function settingsFindings(text, rel) {
   const permissions = isObject(json.permissions) ? json.permissions : {};
   if (Array.isArray(permissions.allow)) {
     const broad = permissions.allow.filter((rule) => typeof rule === "string" && BROAD_TOOLS.test(rule.trim()));
-    if (broad.length) add("G09", "warn", String(broad[0]), `pre-approves ${broad.map((r) => code(String(r), 30)).join(", ")} once the folder is trusted, so Claude Code won't ask first`);
+    if (broad.length) add("G09", "warn", String(broad[0]), `pre-approves ${broad.map((r) => code(String(r), 30)).join(", ")} ${user ? "in every project" : "once the folder is trusted"}, so Claude Code won't ask first`);
   }
   if (permissions.defaultMode === "bypassPermissions" || permissions.defaultMode === "auto") {
-    add("G09", local ? "info" : "warn", "defaultMode", `asks for ${permissions.defaultMode} mode, which Claude Code ignores in project settings since 2.1.257, but shows intent`);
+    if (user) add("G09", permissions.defaultMode === "auto" ? "info" : "warn", "defaultMode", `starts every session in ${permissions.defaultMode} mode`);
+    else add("G09", local ? "info" : "warn", "defaultMode", `asks for ${permissions.defaultMode} mode, which Claude Code ignores in project settings since 2.1.257, but shows intent`);
   }
   if (Array.isArray(permissions.additionalDirectories)) {
     const wide = permissions.additionalDirectories.filter((d) => typeof d === "string" && /^(\/|~\/?|\$HOME\/?|[A-Za-z]:\\?)$|^(~|\/home|\/Users|\$HOME)\/[^/]*\/?$/.test(d.trim()));
     if (wide.length) add("G09", "warn", String(wide[0]), `gives Claude access to ${wide.map((d) => code(String(d), 30)).join(", ")} (additionalDirectories)`);
   }
-  if (json.skipDangerousModePermissionPrompt === true) add("G09", local ? "info" : "warn", "skipDangerousModePermissionPrompt", "asks to skip the bypass-mode warning, which Claude Code ignores outside user settings, but shows intent");
+  if (json.skipDangerousModePermissionPrompt === true) {
+    add("G09", local || user ? "info" : "warn", "skipDangerousModePermissionPrompt", user ? "skips the warning before bypass mode" : "asks to skip the bypass-mode warning, which Claude Code ignores outside user settings, but shows intent");
+  }
   if (isObject(json.sandbox) && json.sandbox.enabled === false) add("G09", "info", "sandbox", "turns the Bash sandbox off");
   if (typeof json.agent === "string" && json.agent) add("G04", "warn", `"agent"`, `runs the whole session as the agent ${code(json.agent, 40)}, with that agent's prompt, tools and model`);
-  if (typeof json.model === "string" && json.model) add("G04", WEAK_MODEL.test(json.model) ? "warn" : "info", `"model"`, `sets the session's model to ${code(json.model, 40)}`);
-  if (!findings.some((f) => f.rule === "G12")) findings.push(...secretFindings(text));
+  if (typeof json.model === "string" && json.model) add("G04", WEAK_MODEL.test(json.model) && !user ? "warn" : "info", `"model"`, `sets the session's model to ${code(json.model, 40)}`);
+  if (!given && !findings.some((f) => f.rule === "G12")) findings.push(...secretFindings(text));
   return findings;
 }
-function mcpFindings(text) {
-  let json;
-  try {
-    json = parseJsonc(text);
-  } catch {
-    return [{ rule: "G03", severity: "info", line: 1, message: "isn't valid JSON, so guard couldn't read its servers" }];
+function mcpFindings(text, rel, given) {
+  let json = given;
+  if (!given) {
+    try {
+      json = parseJsonc(text);
+    } catch {
+      return [{ rule: "G03", severity: "info", line: 1, message: "isn't valid JSON, so guard couldn't read its servers" }];
+    }
   }
   const servers = isObject(json) && isObject(json.mcpServers) ? json.mcpServers : {};
   const findings = [];
@@ -605,9 +615,10 @@ function mcpFindings(text) {
     const line = lineOf(text, `"${name}"`);
     const command = commandText(server);
     if (command) {
-      findings.push({ rule: "G03", severity: "info", line, message: `starts the MCP server ${code(name, 40)}: ${cmd(command)}, which claude -p and SDK sessions connect without asking` });
+      const when = rel.startsWith("~/") || rel.startsWith("plugins/") ? "in every session" : "which claude -p and SDK sessions connect without asking";
+      findings.push({ rule: "G03", severity: "info", line, message: `starts the MCP server ${code(name, 40)}: ${cmd(command)}, ${when}` });
       for (const hit of commandHits(command, "command")) findings.push({ rule: hit.rule, severity: hit.severity, line, message: hit.message });
-    } else if (typeof server.url === "string") {
+    } else if (typeof server.url === "string" && server.url) {
       findings.push({ rule: "G03", severity: "info", line, message: `connects the MCP server ${code(name, 40)} to ${hostOf(server.url)}` });
     }
     const helper = server.headersHelper;
@@ -620,7 +631,31 @@ function mcpFindings(text) {
       }
     }
   }
-  if (!findings.some((f) => f.rule === "G12")) findings.push(...secretFindings(text));
+  if (!given && !findings.some((f) => f.rule === "G12")) findings.push(...secretFindings(text));
+  return findings;
+}
+function pluginFindings(text, rel, given) {
+  let json = given;
+  if (!json) {
+    try {
+      const parsed = parseJsonc(text);
+      json = isObject(parsed) ? parsed : {};
+    } catch {
+      return [{ rule: "G03", severity: "info", line: 1, message: "isn't valid JSON, so guard couldn't read it" }];
+    }
+    if (rel.toLowerCase().endsWith(".lsp.json") && !isObject(json.lspServers)) json = { lspServers: json };
+  }
+  const findings = [];
+  if (isObject(json.hooks)) findings.push(...settingsFindings(text, rel, { hooks: json.hooks }));
+  if (isObject(json.mcpServers)) findings.push(...mcpFindings(text, rel, { mcpServers: json.mcpServers }));
+  for (const [name, server] of Object.entries(isObject(json.lspServers) ? json.lspServers : {})) {
+    const command = isObject(server) ? commandText(server) : "";
+    if (!command) continue;
+    const line = lineOf(text, `"${name}"`);
+    findings.push({ rule: "G03", severity: "info", line, message: `starts the language server ${code(name, 40)}: ${cmd(command)}, for the files it handles` });
+    for (const hit of commandHits(command, "command")) findings.push({ rule: hit.rule, severity: hit.severity, line, message: hit.message });
+  }
+  if (!given) findings.push(...secretFindings(text));
   return findings;
 }
 function otherAgentFindings(text, file) {
@@ -666,7 +701,7 @@ function otherAgentFindings(text, file) {
 function scriptsRun(root, commands) {
   const found = /* @__PURE__ */ new Set();
   for (const command of commands) {
-    const relative = command.replace(/["']?\$\{?(CLAUDE_PROJECT_DIR|PWD)\}?["']?\//g, "./");
+    const relative = command.replace(/["']?\$\{?(CLAUDE_PROJECT_DIR|CLAUDE_PLUGIN_ROOT|PWD)\}?["']?\//g, "./");
     for (const token of relative.split(/[\s"'`;&|()<>]+/)) {
       const cleaned = token.replace(/^\.\//, "");
       if (!cleaned || cleaned.startsWith("-") || cleaned.includes("$") || !/[/.]/.test(cleaned) || /^[a-z]+:\/\//i.test(cleaned)) continue;
@@ -693,8 +728,9 @@ function lint(text, kind, rel) {
   const findings = kind === "hook-script" ? [] : hiddenCharacters(text);
   if (TEXT.has(kind)) findings.push(...textFindings(text, kind), ...secretFindings(text));
   else if (kind === "docs") findings.push(...docsFindings(text));
-  else if (kind === "settings") findings.push(...settingsFindings(text, rel));
-  else if (kind === "mcp") findings.push(...mcpFindings(text));
+  else if (kind === "settings" || kind === "hooks") findings.push(...settingsFindings(text, rel));
+  else if (kind === "mcp") findings.push(...mcpFindings(text, rel));
+  else if (kind === "plugin") findings.push(...pluginFindings(text, rel));
   else if (kind === "other-agent") findings.push(...otherAgentFindings(text, rel), ...secretFindings(text));
   else if (kind === "hook-script") {
     for (const hit of commandHits(text, "command")) findings.push({ rule: hit.rule, severity: hit.severity, line: lineAt(text, hit.index), message: hit.message });
@@ -730,7 +766,7 @@ function writePrivate(file, data, append = false) {
 }
 function saveState(scan, previous, alerted, by, version2) {
   const files = {};
-  const stats = new Map(scan.files.map((e) => [e.path, statOf(path.join(scan.root, e.path))]));
+  const stats = new Map(scan.files.map((e) => [e.path, statOf(e.abs ?? path.join(scan.root, e.path))]));
   for (const e of scan.files) {
     const before = previous?.files[e.path];
     const stat = stats.get(e.path);
@@ -765,8 +801,9 @@ var statOf = (file) => {
 };
 var GuardError = class extends Error {
 };
-function entryOf(root, rel, kind, previous) {
+function entryOf(root, rel, kind, previous, key = rel) {
   const abs = path.join(root, rel);
+  const where = key === rel ? {} : { abs };
   let lstat;
   try {
     lstat = fs.lstatSync(abs);
@@ -774,7 +811,7 @@ function entryOf(root, rel, kind, previous) {
     return null;
   }
   const findings = [];
-  if (lstat.isSymbolicLink()) {
+  if (key === rel && lstat.isSymbolicLink()) {
     let target;
     try {
       target = fs.realpathSync(abs);
@@ -788,14 +825,14 @@ function entryOf(root, rel, kind, previous) {
   }
   const stat = statOf(abs);
   if (!stat?.isFile()) return null;
-  const cached = previous?.rules === RULES_VERSION ? previous.files[rel] : void 0;
-  if (cached && cached.kind === kind && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) return { path: rel, kind, sha256: cached.sha256, size: stat.size, findings: cached.findings };
+  const cached = previous?.rules === RULES_VERSION ? previous.files[key] : void 0;
+  if (cached && cached.kind === kind && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) return { path: key, kind, sha256: cached.sha256, size: stat.size, findings: cached.findings, ...where };
   if (stat.size > MAX_BYTES) {
-    return { path: rel, kind, sha256: sha256(`size:${stat.size}:${stat.mtimeMs}`), size: stat.size, findings: [{ rule: "G01", severity: "info", line: 1, message: `is over ${MAX_BYTES >> 20} MB, so guard didn't read it` }] };
+    return { path: key, kind, sha256: sha256(`size:${stat.size}:${stat.mtimeMs}`), size: stat.size, findings: [{ rule: "G01", severity: "info", line: 1, message: `is over ${MAX_BYTES >> 20} MB, so guard didn't read it` }], ...where };
   }
   const data = fs.readFileSync(abs);
-  findings.push(...lint(data.toString("utf8"), kind, rel));
-  return { path: rel, kind, sha256: sha256(data), size: stat.size, findings };
+  findings.push(...lint(data.toString("utf8"), kind, key));
+  return { path: key, kind, sha256: sha256(data), size: stat.size, findings, ...where };
 }
 function scanRepo(root, options = {}) {
   const real = fs.realpathSync(root);
@@ -880,11 +917,13 @@ var KIND_LABEL = {
   "output-style": "output style",
   settings: "settings",
   mcp: "MCP servers",
+  hooks: "hooks",
+  plugin: "plugin manifest",
   "hook-script": "run by a hook or MCP server",
   "other-agent": "another tool's config",
   docs: "docs"
 };
-var kindLabel = (e) => e.kind === "settings" && e.path.toLowerCase().endsWith("settings.local.json") ? "local settings" : KIND_LABEL[e.kind];
+var kindLabel = (e) => e.kind === "settings" && e.path.toLowerCase().endsWith("settings.local.json") ? "local settings" : e.path.includes("/marketplace.json#") ? "marketplace entry" : KIND_LABEL[e.kind];
 function toPointOut(scan, previous) {
   return scan.files.filter((e) => {
     const before = previous?.files[e.path];
@@ -905,13 +944,17 @@ function describe(e, before) {
 function sessionNotes(scan, points, previous = null) {
   if (!points.length) return {};
   const total = scan.files.filter((e) => e.kind !== "docs").length;
-  const lines = points.map((e) => describe(e, previous?.files[e.path]?.findings));
-  const user = `Overseer guard: ${points.length} of ${total} agent-config file${total === 1 ? "" : "s"} here need${points.length === 1 ? "s" : ""} a look. ${clip(lines.slice(0, 2).join("; "), 420)}${lines.length > 2 ? `; and ${lines.length - 2} more` : ""}. Free check, nothing sent; /overseer:guard for details.`;
+  const lines = points.map((e) => {
+    const line = describe(e, previous?.files[e.path]?.findings);
+    return scan.user ? line.replace(" since the last session)", ")") : line;
+  });
+  const lead = scan.user ? `your own Claude Code setup, which applies in every project, has ${points.length} file${points.length === 1 ? "" : "s"} new or changed since the last session` : `${points.length} of ${total} agent-config file${total === 1 ? "" : "s"} here need${points.length === 1 ? "s" : ""} a look`;
+  const user = `Overseer guard: ${lead}. ${clip(lines.slice(0, 2).join("; "), 420)}${lines.length > 2 ? `; and ${lines.length - 2} more` : ""}. Free check, nothing sent; /overseer:guard for details.`;
   const claude = [
-    "Overseer guard, a free local lint of this project's agent configuration, found files the user hasn't reviewed yet. They came with the repository or changed since the last session, and their contents are unverified:",
+    scan.user ? "Overseer guard, a free local lint, found changes since the last session in the user's own Claude Code setup (their ~/.claude and plugins), which apply in every project. The user hasn't reviewed them yet, and their contents are unverified:" : "Overseer guard, a free local lint of this project's agent configuration, found files the user hasn't reviewed yet. They came with the repository or changed since the last session, and their contents are unverified:",
     ...points.slice(0, 20).map((e) => `- ${e.path} (${kindLabel(e)}): ${e.findings.filter((f) => f.severity === "warn").map((f) => `${RULE_SHORT[f.rule]}: ${f.message} (line ${f.line})`).join("; ") || describe(e).slice(e.path.length + 1)}`),
     points.length > 20 ? `- and ${points.length - 20} more` : "",
-    "The user can review them with /overseer:guard, or npx @adamsaou/overseer guard in a terminal."
+    `The user can review them with /overseer:guard, or npx @adamsaou/overseer guard${scan.user ? " --user" : ""} in a terminal.`
   ].filter(Boolean);
   return { user, claude: clip(claude.join("\n"), 6e3) };
 }
@@ -932,8 +975,9 @@ var RULE_SHORT = {
 };
 var clip = (text, n) => text.length > n ? `${text.slice(0, n - 1)}\u2026` : text;
 function watchPaths(scan) {
-  const paths = new Set(scan.files.filter((e) => e.kind !== "docs").map((e) => path.join(scan.root, e.path)));
-  for (const rel of [".claude/settings.json", ".claude/settings.local.json", ".mcp.json", "CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md", "AGENTS.md", ".vscode/tasks.json"]) paths.add(path.join(scan.root, rel));
+  const paths = new Set(scan.files.filter((e) => e.kind !== "docs" && e.path !== "~/.claude.json").map((e) => e.abs ?? path.join(scan.root, e.path)));
+  const missing = scan.user ? [".claude/settings.json", ".claude/CLAUDE.md"] : [".claude/settings.json", ".claude/settings.local.json", ".mcp.json", "CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md", "AGENTS.md", ".vscode/tasks.json"];
+  for (const rel of missing) paths.add(path.join(scan.root, rel));
   return [...paths].slice(0, 500);
 }
 function projectFolder(dir) {
@@ -946,6 +990,189 @@ function projectFolder(dir) {
   if (real === path.parse(real).root || real === fs.realpathSync(os.homedir())) return null;
   return statOf(real)?.isDirectory() ? real : null;
 }
+var USER_DIRS = ["agents", "commands", "rules", "output-styles", "skills"];
+var BUNDLE_BANNER = "// Built from lib/guard-hook.ts and lib/guard.ts by scripts/build-hooks.ts";
+function startsWith(file, text) {
+  try {
+    const fd = fs.openSync(file, "r");
+    try {
+      const head = Buffer.alloc(text.length);
+      fs.readSync(fd, head, 0, text.length, 0);
+      return head.toString("utf8") === text;
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return false;
+  }
+}
+var userRoot = () => fs.realpathSync(os.homedir());
+function readJson(file, max = MAX_BYTES) {
+  try {
+    if ((statOf(file)?.size ?? Infinity) > max) return null;
+    const text = fs.readFileSync(file, "utf8");
+    const json = parseJsonc(text);
+    return isObject(json) ? { text, json } : null;
+  } catch {
+    return null;
+  }
+}
+var subdirs = (dir) => {
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => ({ name: d.name, path: path.join(dir, d.name) }));
+  } catch {
+    return [];
+  }
+};
+function pluginKindOf(rel) {
+  const lower = rel.toLowerCase();
+  if (lower === "hooks/hooks.json") return "hooks";
+  if (lower === ".mcp.json") return "mcp";
+  if (lower === ".lsp.json" || lower === ".claude-plugin/plugin.json") return "plugin";
+  if (lower === "settings.json") return "settings";
+  const kind = kindOf(`.claude/${rel}`);
+  return kind === "agent" || kind === "command" || kind === "output-style" || kind === "skill" ? kind : null;
+}
+function pluginFiles(root) {
+  const out = [];
+  const visit = (rel, depth) => {
+    if (depth > 5 || out.length >= 500) return;
+    let list;
+    try {
+      list = fs.readdirSync(path.join(root, rel), { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const d of list) {
+      const child = rel ? `${rel}/${d.name}` : d.name;
+      if (d.isDirectory()) {
+        if (!SKIP_DIRS.has(d.name) && d.name !== ".in_use") visit(child, depth + 1);
+      } else if (d.isFile() && pluginKindOf(child)) {
+        out.push(child);
+      }
+    }
+  };
+  visit("", 0);
+  return out.sort();
+}
+function declaredCommands(json) {
+  const out = isObject(json.hooks) ? settingsCommands("", { hooks: json.hooks }).map((c) => c.command) : [];
+  for (const servers of [json.mcpServers, json.lspServers]) {
+    if (isObject(servers)) {
+      for (const server of Object.values(servers)) if (isObject(server)) out.push(commandText(server));
+    }
+  }
+  return out.filter(Boolean);
+}
+function userPlugins(home, settings) {
+  const dir = path.join(home, ".claude", "plugins");
+  const enabled = isObject(settings.enabledPlugins) ? settings.enabledPlugins : {};
+  const installed = readJson(path.join(dir, "installed_plugins.json"))?.json;
+  const plugins = [];
+  for (const [id, installs] of Object.entries(isObject(installed?.plugins) ? installed.plugins : {})) {
+    const mine = enabled[id] === true && Array.isArray(installs) ? installs.find((i) => isObject(i) && i.scope === "user" && typeof i.installPath === "string") : void 0;
+    if (isObject(mine)) plugins.push({ id, root: String(mine.installPath) });
+  }
+  for (const org of subdirs(path.join(dir, "synced"))) {
+    for (const plugin of subdirs(org.path)) plugins.push({ id: `${plugin.name.replace(/~g\d+$/, "")}@claude.ai`, root: plugin.path });
+  }
+  return plugins;
+}
+function scanUser(options = {}) {
+  const home = fs.realpathSync(options.home ?? os.homedir());
+  const previous = options.previous === void 0 ? loadState(home) : options.previous;
+  const entries = [];
+  const keys = /* @__PURE__ */ new Set();
+  const add = (root, rel, kind, key) => {
+    if (keys.has(key)) return null;
+    keys.add(key);
+    const entry = entryOf(root, rel, kind, previous, key);
+    if (entry) entries.push(entry);
+    return entry;
+  };
+  const part = (key, kind, abs, value, findings) => {
+    const text = JSON.stringify(value);
+    keys.add(key);
+    entries.push({ path: key, kind, sha256: sha256(text), size: text.length, findings, abs });
+  };
+  const found = /* @__PURE__ */ new Set();
+  for (const rel of [".claude/settings.json", ".claude/CLAUDE.md"]) if (statOf(path.join(home, rel))?.isFile()) found.add(rel);
+  for (const dir of USER_DIRS) walk(home, `.claude/${dir}`, 3, found, { dirs: 0 });
+  for (const rel of [...found].sort()) add(home, rel, kindOf(rel), `~/${rel}`);
+  const settings = readJson(path.join(home, ".claude", "settings.json"))?.json ?? {};
+  const commands = settingsCommands("", settings).map((c) => c.command);
+  const state = path.join(home, ".claude.json");
+  const config = readJson(state, 64 << 20);
+  const servers = config && isObject(config.json.mcpServers) ? config.json.mcpServers : {};
+  if (config && Object.keys(servers).length) {
+    part("~/.claude.json", "mcp", state, servers, mcpFindings(config.text, "~/.claude.json", { mcpServers: servers }));
+    commands.push(...declaredCommands({ mcpServers: servers }));
+  } else if (!config && statOf(state) && previous?.files["~/.claude.json"]) {
+    const before = previous.files["~/.claude.json"];
+    keys.add("~/.claude.json");
+    entries.push({ path: "~/.claude.json", kind: before.kind, sha256: before.sha256, size: before.size, findings: before.findings, abs: state });
+  }
+  for (const rel of scriptsRun(home, commands.map((c) => c.replace(/(^|[\s"'=])(?:~|\$HOME|\$\{HOME\})\//g, "$1./")))) add(home, rel, "hook-script", `~/${rel}`);
+  const queue = entries.filter((e) => e.kind === "instructions").map((e) => ({ rel: e.path.slice(2), depth: 0 }));
+  while (queue.length) {
+    const { rel, depth } = queue.shift();
+    let text;
+    try {
+      text = fs.readFileSync(path.join(home, rel), "utf8");
+    } catch {
+      continue;
+    }
+    for (const target of depth < 5 ? imports(text) : []) {
+      const imported = posix(path.relative(home, path.resolve(home, path.posix.dirname(rel), target)));
+      if (imported.startsWith("..") || path.isAbsolute(imported)) continue;
+      if (add(home, imported, "instructions", `~/${imported}`)) queue.push({ rel: imported, depth: depth + 1 });
+    }
+  }
+  const marketplaces = readJson(path.join(home, ".claude", "plugins", "known_marketplaces.json"))?.json ?? {};
+  for (const { id, root } of userPlugins(home, settings)) {
+    const base = `plugins/${id}`;
+    const kinds = new Map(pluginFiles(root).map((rel) => [rel, pluginKindOf(rel)]));
+    const manifest = readJson(path.join(root, ".claude-plugin", "plugin.json"))?.json ?? {};
+    for (const [field, kind] of [["hooks", "hooks"], ["mcpServers", "mcp"]]) {
+      for (const named of [manifest[field]].flat()) {
+        if (typeof named !== "string") continue;
+        const rel = posix(path.relative(root, path.resolve(root, named)));
+        if (!rel.startsWith("..") && !path.isAbsolute(rel)) kinds.set(rel, kind);
+      }
+    }
+    const run = [];
+    for (const [rel, kind] of kinds) {
+      add(root, rel, kind, `${base}/${rel}`);
+      const json = kind === "hooks" || kind === "mcp" || kind === "plugin" ? readJson(path.join(root, rel))?.json : void 0;
+      if (json) run.push(...declaredCommands(rel.toLowerCase().endsWith(".lsp.json") && !isObject(json.lspServers) ? { lspServers: json } : json));
+    }
+    const at = id.lastIndexOf("@");
+    const market = marketplaces[id.slice(at + 1)];
+    const location = isObject(market) && typeof market.installLocation === "string" ? market.installLocation : null;
+    const file = location ? path.join(location, ".claude-plugin", "marketplace.json") : null;
+    const listing = file ? readJson(file, 16 << 20) : null;
+    const listed = listing && Array.isArray(listing.json.plugins) ? listing.json.plugins : [];
+    const entry = listed.find((p) => isObject(p) && p.name === id.slice(0, at));
+    if (file && listing && isObject(entry)) {
+      const declared = Object.fromEntries(["hooks", "mcpServers", "lspServers"].filter((k) => isObject(entry[k])).map((k) => [k, entry[k]]));
+      if (Object.keys(declared).length) {
+        part(`${base}/marketplace.json#${id.slice(0, at)}`, "plugin", file, declared, pluginFindings(listing.text, `${base}/marketplace.json`, declared));
+        run.push(...declaredCommands(declared));
+      }
+    }
+    for (const rel of scriptsRun(root, run)) {
+      const entry2 = add(root, rel, "hook-script", `${base}/${rel}`);
+      if (entry2 && id.startsWith("overseer@") && rel === "scripts/guard.mjs" && startsWith(path.join(root, rel), BUNDLE_BANNER)) entry2.findings = [];
+    }
+  }
+  const files = entries.map((e) => {
+    const before = previous?.files[e.path];
+    return { ...e, status: !previous ? "first" : !before ? "new" : before.sha256 !== e.sha256 ? "changed" : "seen" };
+  });
+  const removed = previous ? Object.keys(previous.files).filter((key) => !keys.has(key)) : [];
+  return { root: home, head: null, first: !previous, files: files.sort((a, b) => a.path.localeCompare(b.path)), removed, user: true };
+}
+var pluginsIn = (scan) => new Set(scan.files.map((e) => /^plugins\/([^/]+)\//.exec(e.path)?.[1]).filter(Boolean)).size;
 
 // lib/guard-hook.ts
 var off = (value) => OFF.test(value?.trim() ?? "");
@@ -956,30 +1183,68 @@ function version() {
     return "unknown";
   }
 }
-function sessionStart(input) {
+var flagged = (entries) => new Set(entries.filter((e) => warnings(e).length).map((e) => e.path));
+function project(input, by) {
   const root = projectFolder(process.env.CLAUDE_PROJECT_DIR || input.cwd || "");
   if (!root) return null;
   const previous = loadState(root);
   const scan = scanRepo(root, { previous });
   const points = toPointOut(scan, previous);
-  const notes = sessionNotes(scan, points, previous);
-  saveState(scan, previous, new Set(points.filter((e) => warnings(e).length).map((e) => e.path)), "session-start", version());
+  saveState(scan, previous, flagged(points), by, version());
+  return { scan, points, previous };
+}
+function own(by) {
+  const previous = loadState(userRoot());
+  const scan = scanUser({ previous });
+  const points = previous ? toPointOut(scan, previous) : [];
+  saveState(scan, previous, flagged(previous ? points : scan.files), by, version());
+  return { scan, points, previous };
+}
+var PASSES = [
+  ["this project's agent configuration", (input, by) => project(input, by)],
+  ["your own Claude Code setup", (_input, by) => own(by)]
+];
+function sessionStart(input) {
+  const messages = [];
+  const context = [];
+  const watch = /* @__PURE__ */ new Set();
+  for (const [what, pass] of PASSES) {
+    try {
+      const result = pass(input, "session-start");
+      if (!result) continue;
+      const notes = sessionNotes(result.scan, result.points, result.previous);
+      if (notes.user) messages.push(notes.user);
+      if (notes.claude) context.push(notes.claude);
+      if (result.scan.user && !result.previous) {
+        const plugins = pluginsIn(result.scan);
+        messages.push(`Overseer guard now also watches your own Claude Code setup: ~/.claude and ${plugins} plugin${plugins === 1 ? "" : "s"}. From the next session it points out what changes in them; npx @adamsaou/overseer guard --user lists what they run.`);
+      }
+      for (const file of watchPaths(result.scan)) watch.add(file);
+    } catch (err) {
+      messages.push(`Overseer guard couldn't check ${what}: ${err.message}`);
+    }
+  }
   return {
-    ...notes.user ? { systemMessage: notes.user } : {},
-    hookSpecificOutput: { hookEventName: "SessionStart", ...notes.claude ? { additionalContext: notes.claude } : {}, watchPaths: watchPaths(scan) }
+    ...messages.length ? { systemMessage: messages.join("\n") } : {},
+    hookSpecificOutput: { hookEventName: "SessionStart", ...context.length ? { additionalContext: context.join("\n\n") } : {}, watchPaths: [...watch].slice(0, 500) }
   };
 }
 function fileChanged(input) {
-  const root = projectFolder(process.env.CLAUDE_PROJECT_DIR || input.cwd || "");
-  if (!root || typeof input.file_path !== "string") return null;
-  const previous = loadState(root);
-  const scan = scanRepo(root, { previous });
-  const points = toPointOut(scan, previous);
-  saveState(scan, previous, new Set(points.filter((e) => warnings(e).length).map((e) => e.path)), "file-changed", version());
-  const lines = points.map((e) => describe(e, previous?.files[e.path]?.findings).replace(/ \((new|changed) since the last session\)/, " (changed during this session)"));
+  if (typeof input.file_path !== "string") return null;
+  const lines = [];
+  const watch = /* @__PURE__ */ new Set();
+  for (const [, pass] of PASSES) {
+    try {
+      const result = pass(input, "file-changed");
+      if (!result) continue;
+      for (const e of result.points) lines.push(describe(e, result.previous?.files[e.path]?.findings).replace(/ \((new|changed) since the last session\)/, " (changed during this session)"));
+      for (const file of watchPaths(result.scan)) watch.add(file);
+    } catch {
+    }
+  }
   return {
     ...lines.length ? { systemMessage: `Overseer guard: ${lines.slice(0, 2).join("; ")}${lines.length > 2 ? `; and ${lines.length - 2} more` : ""}. /overseer:guard for details.` } : {},
-    watchPaths: watchPaths(scan)
+    watchPaths: [...watch].slice(0, 500)
   };
 }
 function main() {
@@ -990,12 +1255,7 @@ function main() {
     if (!root || !repositoryTurnsGuardOff(root)) return;
   }
   const event = process.argv[2];
-  let out = null;
-  try {
-    out = event === "session-start" ? sessionStart(input) : event === "file-changed" ? fileChanged(input) : null;
-  } catch (err) {
-    if (event === "session-start") out = { systemMessage: `Overseer guard couldn't check this project's agent configuration: ${err.message}` };
-  }
+  const out = event === "session-start" ? sessionStart(input) : event === "file-changed" ? fileChanged(input) : null;
   if (out) fs2.writeSync(1, JSON.stringify(out));
 }
 try {

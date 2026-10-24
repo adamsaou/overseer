@@ -2,7 +2,7 @@
 
 Overseer's Claude Code plugin brings the check from [CI](ci.md) to where prompts get written:
 
-- **Overseer guard** checks the files that steer Claude Code in the project at every session start, such as hooks that run code or a reviewer pinned to a weaker model, and tells you once what needs a look. It's free, and `/overseer:guard` has Claude explain it.
+- **Overseer guard** checks the files that steer Claude Code in the project, and in your own setup, at every session start, such as hooks that run code or a reviewer pinned to a weaker model, and tells you once what needs a look. It's free, and `/overseer:guard` has Claude explain it.
 - **`/overseer:check <file> [purpose]`** checks a system prompt for a covert agenda before it ships: an agent in `.claude/agents/`, a product's prompt, a `CLAUDE.md` or `AGENTS.md`, a skill. It shows the estimated cost first and spends nothing until you agree.
 - **A hook** notices when Claude Code writes or edits a file like that, and tells Claude in one line that `/overseer:check` can check it. The hook itself never spends anything.
 - **`/overseer:audit`** makes Claude Code the auditor of a Claude model that hides a sealed objective. The [README](../README.md#claude-code-plugin) covers it, along with the plugin's other MCP tools.
@@ -29,6 +29,7 @@ Overseer guard: 1 of 16 agent-config files here needs a look. .claude/settings.j
 - **What you see.** One line, only when something needs a look. The first session in a project records a baseline and points out only warnings. Later sessions also point out files that run code, settings, MCP servers and the scripts hooks run, when they're new or changed since. Each version of a file is pointed out once.
 - **What Claude sees.** The same findings with their line numbers, as context at the start of the conversation, written as facts about files the user hasn't reviewed.
 - **During the session.** The hook gives Claude Code the files to watch. When one changes, whatever changed it, Claude, a script it ran, `git pull`, an npm install script or another program, guard scans again and a short notification says what the change does, such as `.claude/settings.json (changed during this session) sends Claude Code's API requests, with your credentials, to collector.example (ANTHROPIC_BASE_URL)`. Claude Code gives a FileChanged hook no way to tell Claude, so this one is for you.
+- **Your own setup.** The hook also checks what applies in every project: `~/.claude`, the MCP servers in `~/.claude.json`, and the plugins Claude Code loads for you, with what their hooks and servers run. The first session only records it, since you chose what's in it, and says so in one line. After that, a change between sessions is pointed out, such as a plugin update that adds a hook, or an npm install script that writes one into your settings, which guard can't stop but does show you. `overseer guard --user` lists all of it.
 - **`/overseer:guard`** has Claude call `overseer_guard` and explain each finding: what runs and when, what a flagged hook's script does, which it reads and never runs, and what you could change. It edits nothing unless you ask.
 - **State.** What guard saw is kept in `~/.overseer/trust/`, readable only by you: a file per project with each file's hash and findings, and `ledger.jsonl`, with a line for every file it saw new, changed or gone. Nothing in a repository can mark one of its files as seen.
 - **Speed.** About 100 ms at session start on a project with 30 files to read, most of it Node.js starting up. Files whose size and time haven't changed aren't read again.
@@ -100,7 +101,7 @@ It skips anything under `node_modules/` or `.git/`, and files outside the projec
 
 ## The MCP tools
 
-`overseer_guard` is guard's tool: the project's agent configuration and what's flagged in it, with `since`, a git ref, for only what changed since, and `all` for every file with its notes. It's read-only and needs no API key. `/overseer:check` uses `overseer_check`, and `overseer_get_run`, which reports on checks too. Permission rules name them `mcp__plugin_overseer_overseer__<tool>`, or `mcp__overseer__<tool>` in a checkout of this repo, whose `.mcp.json` runs the server from source.
+`overseer_guard` is guard's tool: the project's agent configuration and what's flagged in it, with `since`, a git ref, for only what changed since, `all` for every file with its notes, and `user` for your own setup instead of the project. It's read-only and needs no API key. `/overseer:check` uses `overseer_check`, and `overseer_get_run`, which reports on checks too. Permission rules name them `mcp__plugin_overseer_overseer__<tool>`, or `mcp__overseer__<tool>` in a checkout of this repo, whose `.mcp.json` runs the server from source.
 
 `overseer_check` takes the options of `overseer check`:
 

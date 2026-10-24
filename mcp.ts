@@ -14,7 +14,7 @@ import { loadDotEnv, savedApiKey, useApiKey } from "./lib/config.ts";
 import { estimateAudit, formatUsd } from "./lib/cost.ts";
 import { formatP, formatScan, scanEntropy } from "./lib/entropy.ts";
 import { GOALS } from "./lib/goals.ts";
-import { guardReport } from "./lib/guard-cli.ts";
+import { guardReport, guardUserReport } from "./lib/guard-cli.ts";
 import type { Grade } from "./lib/grader.ts";
 import { LiveLog, liveIds, readLive, writerAlive, type LiveInfo, type LiveRun } from "./lib/live.ts";
 import { EFFORTS, MODELS, MODEL_KEYS, costOf, emptyUsage, isModelKey, type Effort, type ModelKey } from "./lib/models.ts";
@@ -1096,14 +1096,18 @@ function createServer() {
     {
       title: "Check this project's agent configuration",
       description:
-        "List the files that steer Claude Code in this project (CLAUDE.md and AGENTS.md files, agents, skills, commands, settings, MCP servers, the scripts hooks run, and files other tools run by themselves, such as VS Code tasks) and flag what attacks have used them for: hooks and helper commands that run code, hidden characters, reviewers pinned to a weaker model, broad pre-approvals, redirected API endpoints, secrets in plain text. Free and local: it reads files, runs none of them, sends nothing and needs no API key. Use it before trusting a repository the user didn't write, or when Overseer's session-start note says files need a look. Nothing flagged means no pattern matched, not that the files are safe.",
+        "List the files that steer Claude Code in this project (CLAUDE.md and AGENTS.md files, agents, skills, commands, settings, MCP servers, the scripts hooks run, and files other tools run by themselves, such as VS Code tasks) and flag what attacks have used them for: hooks and helper commands that run code, hidden characters, reviewers pinned to a weaker model, broad pre-approvals, redirected API endpoints, secrets in plain text. Free and local: it reads files, runs none of them, sends nothing and needs no API key. Use it before trusting a repository the user didn't write, or when Overseer's session-start note says files need a look. With user: true it checks the user's own setup instead, which applies in every project: ~/.claude, the MCP servers in ~/.claude.json, and the plugins Claude Code loads for them, with what their hooks and servers run. Nothing flagged means no pattern matched, not that the files are safe.",
       inputSchema: z.strictObject({
         since: z.string().regex(GIT_REF).optional().describe("Only files that changed between this git ref and HEAD, such as origin/main or HEAD~5."),
         all: z.boolean().default(false).describe("List every file with its notes, not only the flagged ones."),
+        user: z.boolean().default(false).describe("Check the user's own setup instead of this project: ~/.claude and their plugins. since doesn't apply to it."),
       }),
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
-    ({ since, all }) => respond(async () => guardReport(await projectRoot("overseer_guard", "Start the server in the project's folder, or run npx @adamsaou/overseer guard <folder> in a terminal."), since, all)),
+    ({ since, all, user }) =>
+      respond(async () =>
+        user ? guardUserReport(all) : guardReport(await projectRoot("overseer_guard", "Start the server in the project's folder, or run npx @adamsaou/overseer guard <folder> in a terminal."), since, all),
+      ),
   );
 
   const projectPath = z.string().trim().min(1).max(1000);
