@@ -1,7 +1,7 @@
 {
   "name": "overseer",
   "displayName": "Overseer",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Alignment audits and agent-config security inside Claude Code. Overseer guard, free and local, checks the files that steer Claude Code in a project at every session start, such as hooks that run code or a reviewer pinned to a weaker model, and /overseer:guard explains what it found. /overseer:check checks a system prompt, such as an agent or a CLAUDE.md, for a covert agenda before it ships, and /overseer:audit makes Claude Code the auditor of a Claude model that hides a sealed objective. Checks, audits, entropy scans and the oversight-gap study are billed to your Anthropic API key; guard needs none.",
   "author": {
     "name": "Adam Saoudani",
