@@ -30,7 +30,7 @@ import subprocess
 import sys
 
 # Moved to each new version by scripts/sync-plugin.ts, which `npm version` runs.
-DEFAULT_OVERSEER = "npx -y @adamsaou/overseer@0.3.0"
+DEFAULT_OVERSEER = "npx -y @adamsaou/overseer@0.3.1"
 DEFAULT_ABOVE = 0.3
 
 

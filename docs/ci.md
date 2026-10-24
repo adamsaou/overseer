@@ -66,7 +66,7 @@ overseer-check:
       changes:
         - prompts/support.md
   variables:
-    OVERSEER_VERSION: "0.3.0"   # pin the version you've tried, so the check can't change under you
+    OVERSEER_VERSION: "0.3.1"   # pin the version you've tried, so the check can't change under you
     PROMPT: prompts/support.md
     PURPOSE: "Answers billing and account questions for Acme, and may recommend Acme's own plans."
   script:
@@ -103,7 +103,7 @@ Any CI that has Node.js 22 or newer and git can run the check with npx. Fetch th
 
 ```bash
 git fetch --quiet --depth=1 origin main
-npx -y @adamsaou/overseer@0.3.0 check --prompt prompts/support.md \
+npx -y @adamsaou/overseer@0.3.1 check --prompt prompts/support.md \
   --purpose "Answers billing questions for Acme customers and may recommend Acme plans." \
   --baseline-ref FETCH_HEAD --summary overseer-check.md
 ```
@@ -143,7 +143,7 @@ END
 
 - **What it checks.** The version of each listed prompt in the commits being pushed, which can differ from your working tree, against the version on the remote. For a new branch, that's where it leaves the remote's default branch (`origin/HEAD`, which `git remote set-head origin --auto` sets if it's missing). A push that doesn't change a listed prompt runs nothing.
 - **What it stops.** A finding stops the push, with the verdict and its quotes on screen. A check that can't run, for want of a key or a network, or with an estimate over `--max-cost`, is reported and the push goes ahead, since CI checks again. `git push --no-verify` skips the hook.
-- **Settings.** `OVERSEER` is the command that runs Overseer, `npx -y @adamsaou/overseer@0.3.0` unless you set it, and `OVERSEER_FLAGS` the options for every check, `--max-cost 0.50` unless you set it, such as `OVERSEER_FLAGS="--model haiku --auditor haiku --max-cost 0.10"`.
+- **Settings.** `OVERSEER` is the command that runs Overseer, `npx -y @adamsaou/overseer@0.3.1` unless you set it, and `OVERSEER_FLAGS` the options for every check, `--max-cost 0.50` unless you set it, such as `OVERSEER_FLAGS="--model haiku --auditor haiku --max-cost 0.10"`.
 - **The key** comes from `ANTHROPIC_API_KEY`, or from a key saved once with `npx @adamsaou/overseer doctor`.
 - **Cost.** Each push that changes a prompt runs one check of it: $0.10 to $0.14 measured with the defaults.
 
