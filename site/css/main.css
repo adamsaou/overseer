@@ -2071,6 +2071,15 @@ html[data-world="on"] .shutter-svg {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--gutter);
 }
+/* Each group of commands opens with what it needs: guard's need nothing, the audits' need a key. */
+.slips__head {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--muted);
+}
+.slips + .slips {
+  margin-top: 44px;
+}
 .slip {
   position: relative;
   border: 1px solid var(--rule);
@@ -2080,6 +2089,7 @@ html[data-world="on"] .shutter-svg {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px 16px;
   align-items: start;
+  align-content: start;
 }
 .slip::before,
 .slip::after {
@@ -2113,7 +2123,7 @@ html[data-world="on"] .shutter-svg {
   white-space: pre-wrap;
   overflow-wrap: break-word;
 }
-.slip:last-child:nth-child(odd) {
+.slip:last-of-type:nth-of-type(odd) {
   grid-column: 1 / -1;
 }
 .copy {

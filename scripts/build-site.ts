@@ -200,6 +200,7 @@ const { pageValues, studyValues, posterSet, POSTER_SIZES, REDUCED } = await impo
 const values: Record<string, string> = {
   ...pageValues({ summary, scan: { ...scan, goal: goalOf(scan.objective) }, featured, plates, runs: metas, scans, labels, stills, anchors, presets, three, node: nodeRequirement(pkg.engines?.node) }),
   origin: config.origin,
+  version: pkg.version,
   css: `<style>${cssText}</style>`,
   preload: [
     `<link rel="preload" href="${fontUrl("plate-serif-display-300")}" as="font" type="font/woff2" crossorigin>`,

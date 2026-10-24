@@ -243,11 +243,45 @@
   <div class="run__shutter" data-world-window="run" aria-hidden="true">{{ shutter_still }}</div>
   <div class="run__head">
     <p class="mode label">Run it</p>
-    <h2 id="run-title" class="statement">Live audits run on your machine, with your key.</h2>
-    <p>You need Node.js {{ node }} and an Anthropic API key. Audits are billed to your key, and Overseer shows an estimate before it starts. One live audit makes 50 to 80 API calls, which is why this site only replays them.</p>
+    <h2 id="run-title" class="statement">It all runs on your machine. Guard is free, and audits use your key.</h2>
+    <p>Guard reads the files that steer Claude Code in a repository, such as CLAUDE.md, hooks, skills and MCP servers, and says which ones need a look before Claude Code starts there. It needs only Node.js {{ node }}, runs none of the repository’s code and sends nothing anywhere.</p>
+    <p>Audits also need an Anthropic API key. They’re billed to your key, and Overseer shows an estimate before it starts. One live audit makes 50 to 80 API calls, which is why this site only replays them.</p>
     <p>{{ costs }}</p>
   </div>
   <div class="slips">
+    <h3 class="slips__head label">Free · no API key</h3>
+    <div class="slip">
+      <p class="slip__label label">Check a repository before Claude Code opens it</p>
+      <pre class="slip__code"><code id="cmd-guard">npx @adamsaou/overseer guard</code></pre>
+      <button class="copy" type="button" data-copy="cmd-guard" aria-label="Copy the guard command"><span class="copy__word">Copy</span><svg class="copy__tick" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path d="M2 7.5L5.5 11L12 3" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button>
+    </div>
+    <div class="slip">
+      <p class="slip__label label">Check your own setup: ~/.claude and your plugins</p>
+      <pre class="slip__code"><code id="cmd-guard-user">npx @adamsaou/overseer guard --user</code></pre>
+      <button class="copy" type="button" data-copy="cmd-guard-user" aria-label="Copy the command that checks your own setup"><span class="copy__word">Copy</span><svg class="copy__tick" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path d="M2 7.5L5.5 11L12 3" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button>
+    </div>
+    <div class="slip">
+      <p class="slip__label label">Check every repository you clone, as you clone it</p>
+      <pre class="slip__code"><code id="cmd-guard-git">npx @adamsaou/overseer guard install --git --global</code></pre>
+      <button class="copy" type="button" data-copy="cmd-guard-git" aria-label="Copy the git hooks command"><span class="copy__word">Copy</span><svg class="copy__tick" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path d="M2 7.5L5.5 11L12 3" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button>
+    </div>
+    <div class="slip">
+      <p class="slip__label label">Claude Code plugin · guard at every session start</p>
+      <pre class="slip__code"><code id="cmd-plugin">claude plugin marketplace add adamsaou/overseer
+claude plugin install overseer@overseer</code></pre>
+      <button class="copy" type="button" data-copy="cmd-plugin" aria-label="Copy the plugin commands"><span class="copy__word">Copy</span><svg class="copy__tick" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path d="M2 7.5L5.5 11L12 3" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button>
+    </div>
+    <div class="slip">
+      <p class="slip__label label">In GitHub Actions, on every pull request, forks included</p>
+      <pre class="slip__code"><code id="cmd-guard-ci">- uses: adamsaou/overseer@v{{ version }}
+  with:
+    mode: guard
+    baseline-ref: ${{ github.event.pull_request.base.sha || github.event.before }}</code></pre>
+      <button class="copy" type="button" data-copy="cmd-guard-ci" aria-label="Copy the GitHub Actions step"><span class="copy__word">Copy</span><svg class="copy__tick" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path d="M2 7.5L5.5 11L12 3" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button>
+    </div>
+  </div>
+  <div class="slips">
+    <h3 class="slips__head label">Audits · with your Anthropic API key</h3>
     <div class="slip">
       <p class="slip__label label">Without installing, check your setup</p>
       <pre class="slip__code"><code id="cmd-npx">npx @adamsaou/overseer doctor</code></pre>
@@ -262,12 +296,6 @@
       <p class="slip__label label">Install script · macOS and Linux, no sudo</p>
       <pre class="slip__code"><code id="cmd-curl">curl -fsSL https://raw.githubusercontent.com/<wbr>adamsaou/<wbr>overseer/<wbr>main/<wbr>install.sh&nbsp;|&nbsp;sh</code></pre>
       <button class="copy" type="button" data-copy="cmd-curl" aria-label="Copy the install script command"><span class="copy__word">Copy</span><svg class="copy__tick" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path d="M2 7.5L5.5 11L12 3" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button>
-    </div>
-    <div class="slip">
-      <p class="slip__label label">Claude Code plugin</p>
-      <pre class="slip__code"><code id="cmd-plugin">claude plugin marketplace add adamsaou/overseer
-claude plugin install overseer@overseer</code></pre>
-      <button class="copy" type="button" data-copy="cmd-plugin" aria-label="Copy the plugin commands"><span class="copy__word">Copy</span><svg class="copy__tick" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path d="M2 7.5L5.5 11L12 3" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button>
     </div>
     <div class="slip">
       <p class="slip__label label">Then, in Claude Code, audit with Claude Code itself</p>
@@ -299,7 +327,7 @@ npx -y @adamsaou/overseer check \
       <button class="copy" type="button" data-copy="cmd-scan" aria-label="Copy the scan command"><span class="copy__word">Copy</span><svg class="copy__tick" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path d="M2 7.5L5.5 11L12 3" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button>
     </div>
   </div>
-  <p class="run__links"><a class="navlink" href="https://github.com/adamsaou/overseer">Source · github.com/adamsaou/overseer</a><a class="navlink" href="https://github.com/adamsaou/overseer#where-overseer-fits">In the harness, CI and training</a><a class="navlink" href="https://github.com/adamsaou/overseer#readme">README</a><a class="navlink" href="https://www.npmjs.com/package/@adamsaou/overseer">npm · @adamsaou/overseer</a></p>
+  <p class="run__links"><a class="navlink" href="https://github.com/adamsaou/overseer">Source · github.com/adamsaou/overseer</a><a class="navlink" href="https://github.com/adamsaou/overseer#guard-a-repositorys-agent-configuration">What guard checks</a><a class="navlink" href="https://github.com/adamsaou/overseer#where-overseer-fits">In the harness, CI and training</a><a class="navlink" href="https://github.com/adamsaou/overseer#readme">README</a><a class="navlink" href="https://www.npmjs.com/package/@adamsaou/overseer">npm · @adamsaou/overseer</a></p>
   <p class="sr-only" id="copy-status" aria-live="polite"></p>
 </section>
 
