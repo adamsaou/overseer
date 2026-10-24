@@ -11,4 +11,11 @@ if (major < MIN_NODE) {
   );
   process.exit(1);
 }
-await import("./cli.ts");
+// overseer guard needs none of the rest, so git hooks and the Action's guard mode start it without loading
+// the API client: it's free, local and quick.
+if (process.argv[2] === "guard") {
+  const [{ guardMain }, { packageVersion }] = await Promise.all([import("./lib/guard-cli.ts"), import("./lib/paths.ts")]);
+  process.exitCode = await guardMain(process.argv.slice(3), packageVersion());
+} else {
+  await import("./cli.ts");
+}

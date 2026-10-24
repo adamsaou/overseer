@@ -12,6 +12,7 @@ import { auditRecord, type AuditRecord } from "./lib/dataset.ts";
 import { Endpoint, holdsAnthropicKey } from "./lib/endpoint.ts";
 import { formatP } from "./lib/entropy.ts";
 import { GOALS } from "./lib/goals.ts";
+import { GUARD_HELP, guardMain } from "./lib/guard-cli.ts";
 import { EFFORTS, MODELS, addUsage, costOf, emptyUsage, isModelKey, type Effort, type ModelKey } from "./lib/models.ts";
 import { configFile, dataHome, displayPath, fromSource, packageRoot, packageVersion, resultsDir, runsDir } from "./lib/paths.ts";
 import { askSecret, askYesNo, canPrompt } from "./lib/prompt.ts";
@@ -163,6 +164,8 @@ const HELP = `overseer ${VERSION}: can a weaker AI catch a stronger one hiding a
 Usage
   overseer audit [options]     run one audit in the terminal, with a live readout
   overseer check [options]     check your own assistant's system prompt for a covert agenda, for CI
+  overseer guard [folder]      list and lint the files that steer Claude Code in a repository: free,
+                               local, no API key
   overseer study [options]     run the oversight-gap study (shows the cost and asks first)
   overseer scan [options]      semantic-entropy scans of a batch of questions, such as for each
                                checkpoint of a training run (shows the cost and asks first)
@@ -184,6 +187,12 @@ API key   ANTHROPIC_API_KEY, or one saved in ${displayPath(configFile(HOME))}`;
 type Command = { help: string; run: (args: string[]) => Promise<void> };
 
 const COMMANDS: Record<string, Command> = {
+  guard: {
+    run: async (args) => {
+      process.exitCode = await guardMain(args, VERSION);
+    },
+    help: GUARD_HELP,
+  },
   audit: {
     run: audit,
     help: `Usage: overseer audit [options]

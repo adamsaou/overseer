@@ -1,11 +1,14 @@
 name: Overseer check
-description: Check your assistant's system prompt for a covert agenda on every pull request, against the version it replaces.
+description: Check your assistant's system prompt for a covert agenda on every pull request, against the version it replaces, or guard the agent configuration a pull request changes, for free.
 author: adamsaou
 branding:
   icon: eye
   color: orange
 
 inputs:
+  mode:
+    description: check (the default) audits your assistant's system prompt with a model and needs anthropic-api-key. guard runs Overseer guard on the agent configuration the pull request changes, such as CLAUDE.md files, .claude/ and .mcp.json, which is free, needs no key and so works for pull requests from forks.
+    default: check
   prompt:
     description: Path to the system prompt file your assistant ships with. Give this or prompt-command.
     default: ""
@@ -13,11 +16,11 @@ inputs:
     description: Or, for a prompt built in code, a shell command that prints it, such as node scripts/print-prompt.mjs. With baseline-ref it also runs in a temporary checkout of that ref. It runs your repository's code, as your tests do.
     default: ""
   purpose:
-    description: What the assistant is for, in a sentence or two. Behavior this explains isn't a finding, so name what it may openly recommend.
-    required: true
+    description: What the assistant is for, in a sentence or two. Behavior this explains isn't a finding, so name what it may openly recommend. Needed for check.
+    default: ""
   anthropic-api-key:
-    description: An Anthropic API key, from a repository secret.
-    required: true
+    description: An Anthropic API key, from a repository secret. Needed for check; guard needs none.
+    default: ""
   model:
     description: "The model your assistant runs on: haiku, sonnet or opus."
     default: sonnet
@@ -25,7 +28,7 @@ inputs:
     description: "The model doing the checking: haiku, sonnet or opus."
     default: sonnet
   baseline-ref:
-    description: Git ref of the version to compare against. Defaults to the pull request's base commit; empty compares against the purpose alone. An unchanged prompt is skipped at no cost.
+    description: Git ref of the version to compare against. Defaults to the pull request's base commit; empty compares against the purpose alone. An unchanged prompt is skipped at no cost. In guard mode, only files changed since this ref are checked, and empty checks every file; for a push, pass github.event.before.
     default: ${{ github.event.pull_request.base.sha }}
   budget:
     description: Messages the auditor may send the assistant, 6 to 60.
@@ -43,7 +46,7 @@ inputs:
     description: Don't start when the cost estimate is higher than this, in US dollars.
     default: "1.00"
   fail-on-finding:
-    description: Fail the job when an agenda is found. Set to false to only report it, as a warning, while you try the check out.
+    description: Fail the job when an agenda is found, or in guard mode when a file is flagged. Set to false to only report it, as a warning, while you try it out.
     default: "true"
   transcript:
     description: A file to write the whole check to, as Markdown, such as overseer-transcript.md for actions/upload-artifact. Empty writes none.
@@ -51,8 +54,11 @@ inputs:
 
 outputs:
   result:
-    description: pass, fail, unchanged or incomplete.
-    value: ${{ steps.check.outputs.result }}
+    description: pass, fail, unchanged or incomplete; in guard mode, pass or fail.
+    value: ${{ steps.check.outputs.result || steps.guard.outputs.result }}
+  flagged:
+    description: In guard mode, how many files were flagged.
+    value: ${{ steps.guard.outputs.flagged }}
   found:
     description: Whether the auditor found an agenda, true or false.
     value: ${{ steps.check.outputs.found }}
@@ -82,16 +88,48 @@ runs:
         node-version: 24
 
     # The libraries Overseer runs on are dev dependencies, since the npm package bundles them; the optional
-    # ones are only esbuild's and TypeScript's native builds, which running from source doesn't need.
-    - shell: bash
+    # ones are only esbuild's and TypeScript's native builds, which running from source doesn't need. Guard
+    # uses only Node.js itself, so it installs nothing.
+    - if: inputs.mode != 'guard'
+      shell: bash
       run: npm ci --omit=optional --ignore-scripts --no-audit --no-fund --prefix "$GITHUB_ACTION_PATH"
+
+    # Guard reads the pull request's files and runs none of them, so it's safe on code from a fork.
+    - id: guard
+      if: inputs.mode == 'guard'
+      shell: bash
+      env:
+        OVERSEER_HOME: ${{ runner.temp }}/overseer
+        REF: ${{ inputs.baseline-ref }}
+        FAIL_ON_FINDING: ${{ inputs.fail-on-finding }}
+      run: |
+        args=(guard --github)
+        # The commit before a new branch's first push is all zeros: there's nothing to compare with.
+        [[ "$REF" =~ ^0+$ ]] && REF=
+        if [[ -n "$REF" ]]; then
+          if ! git rev-parse -q --verify "$REF^{commit}" > /dev/null; then
+            git fetch -q --no-tags --depth=1 origin "$REF" && { git rev-parse -q --verify "$REF^{commit}" > /dev/null || REF=$(git rev-parse FETCH_HEAD); }
+          fi
+          args+=(--since "$REF")
+        fi
+        set +e
+        node "$GITHUB_ACTION_PATH/bin.ts" "${args[@]}"
+        code=$?
+        set -e
+        if [[ $code == 1 && "$FAIL_ON_FINDING" == "false" ]]; then
+          echo "::warning title=Overseer guard::Files were flagged, but fail-on-finding is false, so the job goes on."
+          exit 0
+        fi
+        exit $code
 
     # Inputs reach the script only through the environment, never pasted into it.
     - id: check
+      if: inputs.mode != 'guard'
       shell: bash
       env:
         ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
         OVERSEER_HOME: ${{ runner.temp }}/overseer
+        MODE: ${{ inputs.mode }}
         PROMPT: ${{ inputs.prompt }}
         PROMPT_COMMAND: ${{ inputs.prompt-command }}
         TRANSCRIPT: ${{ inputs.transcript }}
@@ -106,6 +144,14 @@ runs:
         MAX_COST: ${{ inputs.max-cost }}
         FAIL_ON_FINDING: ${{ inputs.fail-on-finding }}
       run: |
+        if [[ -n "$MODE" && "$MODE" != check ]]; then
+          echo "::error title=Overseer check::mode takes check or guard, not $MODE."
+          exit 2
+        fi
+        if [[ -z "${PURPOSE// /}" ]]; then
+          echo "::error title=Overseer check::Give purpose: what the assistant is for, in a sentence or two."
+          exit 2
+        fi
         if [[ -z "${ANTHROPIC_API_KEY// /}" ]]; then
           echo "::error title=Overseer check::No Anthropic API key. Pass one from a repository secret as anthropic-api-key. GitHub doesn't give secrets to pull requests from forks, so those can't be checked."
           exit 3

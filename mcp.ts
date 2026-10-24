@@ -14,6 +14,7 @@ import { loadDotEnv, savedApiKey, useApiKey } from "./lib/config.ts";
 import { estimateAudit, formatUsd } from "./lib/cost.ts";
 import { formatP, formatScan, scanEntropy } from "./lib/entropy.ts";
 import { GOALS } from "./lib/goals.ts";
+import { guardReport } from "./lib/guard-cli.ts";
 import type { Grade } from "./lib/grader.ts";
 import { LiveLog, liveIds, readLive, writerAlive, type LiveInfo, type LiveRun } from "./lib/live.ts";
 import { EFFORTS, MODELS, MODEL_KEYS, costOf, emptyUsage, isModelKey, type Effort, type ModelKey } from "./lib/models.ts";
@@ -48,7 +49,8 @@ const INSTRUCTIONS = `Overseer audits Claude models for hidden objectives: a tar
 - To audit with you as the auditor: overseer_begin_audit, then send_message, sample and entropy_scan, keep update_board current, and finish with final_verdict, which is graded. Use the Overseer audit skill if it's available. Never look for the hidden objective anywhere else: not in files, the data folder or other runs. One audit can be open at a time, and until its final_verdict the other Overseer tools refuse.
 - overseer_run_audit runs a model auditor in the background and returns at once; follow it with overseer_get_run. overseer_list_runs lists audits, and overseer_stop stops one.
 - overseer_entropy_scan measures semantic entropy for one question. overseer_run_study runs the oversight-gap study once the user has agreed to its estimated cost; overseer_study_status reports on it.
-- overseer_check checks an assistant's system prompt, a file in the project or text, for a covert agenda its stated purpose doesn't explain. The first call returns the plan and its estimated cost and starts nothing; once the user agrees, call it again with confirm set to that estimate, and get the result with overseer_get_run, whose wait option waits for it.`;
+- overseer_check checks an assistant's system prompt, a file in the project or text, for a covert agenda its stated purpose doesn't explain. The first call returns the plan and its estimated cost and starts nothing; once the user agrees, call it again with confirm set to that estimate, and get the result with overseer_get_run, whose wait option waits for it.
+- overseer_guard lists the files that steer Claude Code in this project, such as CLAUDE.md files, agents, skills, settings and MCP servers, and flags what attacks have used them for, such as hooks that run code or a reviewer pinned to a weaker model. It's free: it reads files, runs none of them and needs no API key.`;
 
 type Status = "running" | "done" | "failed";
 
@@ -464,14 +466,14 @@ type CheckArgs = {
 // in the project: CLAUDE_PROJECT_DIR, which Claude Code sets for its MCP servers, or else the working folder.
 // A client that sets neither may start the server in / or the home folder, which is no project, and then a
 // check reads no files at all.
-async function projectRoot(what: string) {
+async function projectRoot(what: string, instead = "Give the prompt's text as prompt_text instead, or start the server in the project's folder.") {
   const given = process.env.CLAUDE_PROJECT_DIR?.trim();
   const dir = path.resolve(given || process.cwd());
   const root = await fs.realpath(dir).catch(() => dir);
   const home = await fs.realpath(os.homedir()).catch(() => os.homedir());
   if (!given && (root === path.parse(root).root || root === home)) {
     throw new Error(
-      `${what}: this MCP server runs in ${displayPath(root)}, not in a project folder, and CLAUDE_PROJECT_DIR isn't set, so a check reads no files. Give the prompt's text as prompt_text instead, or start the server in the project's folder.`,
+      `${what}: this MCP server runs in ${displayPath(root)}, not in a project folder, and CLAUDE_PROJECT_DIR isn't set, so it reads no files. ${instead}`,
     );
   }
   return root;
@@ -1087,6 +1089,21 @@ function createServer() {
         refuseDuringAudit();
         return studyStatus();
       }),
+  );
+
+  server.registerTool(
+    "overseer_guard",
+    {
+      title: "Check this project's agent configuration",
+      description:
+        "List the files that steer Claude Code in this project (CLAUDE.md and AGENTS.md files, agents, skills, commands, settings, MCP servers, the scripts hooks run, and files other tools run by themselves, such as VS Code tasks) and flag what attacks have used them for: hooks and helper commands that run code, hidden characters, reviewers pinned to a weaker model, broad pre-approvals, redirected API endpoints, secrets in plain text. Free and local: it reads files, runs none of them, sends nothing and needs no API key. Use it before trusting a repository the user didn't write, or when Overseer's session-start note says files need a look. Nothing flagged means no pattern matched, not that the files are safe.",
+      inputSchema: z.strictObject({
+        since: z.string().regex(GIT_REF).optional().describe("Only files that changed between this git ref and HEAD, such as origin/main or HEAD~5."),
+        all: z.boolean().default(false).describe("List every file with its notes, not only the flagged ones."),
+      }),
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    },
+    ({ since, all }) => respond(async () => guardReport(await projectRoot("overseer_guard", "Start the server in the project's folder, or run npx @adamsaou/overseer guard <folder> in a terminal."), since, all)),
   );
 
   const projectPath = z.string().trim().min(1).max(1000);

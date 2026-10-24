@@ -51,6 +51,7 @@
     "deploy": "npx wrangler deploy",
     "typecheck": "tsc --noEmit",
     "build": "node scripts/build-package.ts",
+    "build:hooks": "node scripts/build-hooks.ts",
     "test": "node --test test/*.test.ts",
     "prepack": "npm run build",
     "version": "node scripts/sync-plugin.ts && git add plugins/overseer/.claude-plugin/plugin.json plugins/overseer/.mcp.json examples/ci/gitlab-ci.yml examples/ci/pre-push docs/ci.md examples/training/monitor.py examples/training/README.md",

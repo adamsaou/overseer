@@ -1,6 +1,36 @@
 {
-  "description": "Notes when Claude Code writes a file that looks like instructions for an AI model, such as an agent, a skill, a CLAUDE.md or a system prompt, which /overseer:check can check before it ships. It spends nothing and never blocks; OVERSEER_HOOK=off turns it off.",
+  "description": "Overseer guard, free and local: at session start, lists the files that steer Claude Code in the project (CLAUDE.md files, agents, skills, commands, settings, MCP servers, the scripts hooks run) and points out, once, what needs a look, such as a hook that runs code or a reviewer pinned to a weaker model; it rescans when one of them changes during the session. And when Claude writes a file that looks like instructions for an AI model, it notes that /overseer:check can check it. They spend nothing and never block; OVERSEER_GUARD=off turns guard off, and OVERSEER_HOOK=off turns off both.",
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/guard.mjs",
+              "session-start"
+            ],
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "FileChanged": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/guard.mjs",
+              "file-changed"
+            ],
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Write|Edit|MultiEdit",
@@ -8,7 +38,9 @@
           {
             "type": "command",
             "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/prompt-hook.mjs"],
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/prompt-hook.mjs"
+            ],
             "timeout": 10
           }
         ]

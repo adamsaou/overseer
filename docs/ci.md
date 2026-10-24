@@ -9,7 +9,7 @@ Recipes for four places to run it:
 - [Any other CI](#any-other-ci-through-npx), through npx.
 - [A git pre-push hook](#a-git-pre-push-hook): [`examples/ci/pre-push`](../examples/ci/pre-push).
 
-Each needs an Anthropic API key in `ANTHROPIC_API_KEY`, from your CI's secret store.
+Each needs an Anthropic API key in `ANTHROPIC_API_KEY`, from your CI's secret store. [Guarding the agent configuration](#guard-the-agent-configuration), the other job Overseer does in CI, needs none.
 
 ## GitHub Actions
 
@@ -148,3 +148,52 @@ END
 - **Cost.** Each push that changes a prompt runs one check of it: $0.10 to $0.14 measured with the defaults.
 
 It's a bash script, so it runs on macOS, Linux, and Windows with Git for Windows.
+
+## Guard the agent configuration
+
+[`overseer guard`](../README.md#guard-a-repositorys-agent-configuration) checks what a change does to the files that steer Claude Code: CLAUDE.md files, `.claude/`, `.mcp.json`, the scripts hooks run, and the files other tools run by themselves. It's free and local, needs no API key and runs none of the repository's code, so it's safe on a pull request from a fork, which GitHub gives no secrets and so can't get an `overseer check`.
+
+```yaml
+# .github/workflows/guard.yml
+name: Overseer guard
+on: [pull_request, push]
+permissions:
+  contents: read
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: adamsaou/overseer@main   # pin a release tag or commit SHA
+        with:
+          mode: guard
+          baseline-ref: ${{ github.event.pull_request.base.sha || github.event.before }}
+```
+
+A flagged file fails the job, gets an annotation at the line, and goes into the job summary with what it does:
+
+> ### Overseer guard: 1 file flagged
+>
+> | File | Line | Rule | What it does |
+> | --- | --- | --- | --- |
+> | `.claude/settings.json` | 4 | G02 runs code | runs `node .claude/setup.mjs` at every session start |
+
+- **What it checks.** The files the change touches, against `baseline-ref`: a pull request's base commit, or for a push the commit before it, which the expression above picks. A hook the repository has had all along doesn't fail every pull request. An empty `baseline-ref` checks every file, and so does a new branch's first push.
+- **Outputs.** `result`, `pass` or `fail`, and `flagged`, the number of files flagged. `fail-on-finding: false` reports them as warnings without failing the job.
+- **What it installs.** Nothing: guard is plain Node.js, so the action skips its `npm ci` in guard mode.
+
+In any other CI, or before you open a repository someone sent you:
+
+```bash
+npx -y @adamsaou/overseer@0.3.1 guard --since "$BASE_SHA"   # exit 1 when something is flagged
+npx -y @adamsaou/overseer@0.3.1 guard ~/src/their-repo      # every file
+```
+
+On your machine, so that a checkout, pull or rebase that brings in agent configuration is checked before Claude Code starts there:
+
+```bash
+npx @adamsaou/overseer guard install --git            # this repository
+npx @adamsaou/overseer guard install --git --global   # every repository you clone or init from now on
+```
+
+The hooks are `post-checkout`, `post-merge` and `post-rewrite`. They report only what came in, start Overseer only when agent configuration changed, and never fail the git command. A hook of someone else's is left alone, with the line to add to it printed, and a repository that keeps its hooks elsewhere (`core.hooksPath`, as husky does) gets the lines instead of new files. `--global` sets git's `init.templateDir` to `~/.git-templates` if it isn't set, and says so. `OVERSEER_GUARD=off` skips the hooks.

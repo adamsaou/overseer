@@ -30,6 +30,8 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      # The plugin runs its guard hook from the committed bundle, so it has to match the source.
+      - run: node scripts/build-hooks.ts --check
       # npm pack builds first (prepack), so this tests the package exactly as npm would ship it.
       - run: npm pack
       # The package bundles its dependencies, so it must declare none: npx -y then downloads nothing else.
@@ -113,6 +115,15 @@ jobs:
             const tools = msgs.find((m) => m.id === 2)?.result?.tools ?? [];
             if (!tools.length) throw new Error("tools/list returned no tools");
             console.log(`${tools.length} tools`);'
+      - name: guard runs from the tarball with no API key, and flags a session-start hook
+        run: |
+          export PATH="$RUNNER_TEMP/prefix/bin:$PATH"
+          env -u ANTHROPIC_API_KEY overseer guard
+          mkdir -p "$RUNNER_TEMP/replica/.claude" && cd "$RUNNER_TEMP/replica" && git init -q
+          echo '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo replica"}]}]}}' > .claude/settings.json
+          code=0; env -u ANTHROPIC_API_KEY overseer guard > guard.out || code=$?
+          cat guard.out
+          [[ $code == 1 ]] && grep -q "runs \`echo replica\` at every session start" guard.out
       # The marketplace serves the plugin from main, and its server is the package version .mcp.json pins. A
       # skill that needs a tool newer than that version fails for every new install, so main must not get
       # ahead of npm: on main this fails, and on a pull request it warns.
@@ -162,6 +173,22 @@ jobs:
           anthropic-api-key: not-used-when-unchanged
           baseline-ref: HEAD
       - run: '[[ "${{ steps.unchanged.outputs.result }}" == unchanged ]]'
+      # Guard mode needs no key and installs nothing: nothing changed since HEAD, then a hook the workspace gains.
+      - id: guard-unchanged
+        uses: ./
+        with:
+          mode: guard
+          baseline-ref: HEAD
+      - run: |
+          mkdir -p .claude
+          echo '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo replica"}]}]}}' > .claude/settings.json
+      - id: guard-flagged
+        uses: ./
+        with:
+          mode: guard
+          baseline-ref: ""
+          fail-on-finding: "false"
+      - run: '[[ "${{ steps.guard-unchanged.outputs.result }}" == pass && "${{ steps.guard-flagged.outputs.result }}" == fail && "${{ steps.guard-flagged.outputs.flagged }}" == 1 ]]'
 
   live:
     name: Live checks of the example prompts

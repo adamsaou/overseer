@@ -13,8 +13,8 @@ The same audit runs in three places where people build with models: inside the c
 
 | Where | What it does | Status |
 |---|---|---|
-| [Inside the harness](docs/harness.md) | In Claude Code, `/overseer:check <file>` checks a system prompt, an agent in `.claude/agents/`, a skill or a CLAUDE.md for a covert agenda before it ships, and a hook points such files out when Claude writes them. `/overseer:audit` makes Claude Code the auditor of a model hiding an objective. | Shipped |
-| [In CI](docs/ci.md) | `overseer check` on every change to a prompt, compared with the version it replaces: a GitHub Action, a GitLab CI job, one npx command for any other CI, and a git pre-push hook. | Shipped |
+| [Inside the harness](docs/harness.md) | In Claude Code, [Overseer guard](#guard-a-repositorys-agent-configuration) checks the files that steer Claude Code in a project at every session start, for free. `/overseer:check <file>` checks a system prompt, an agent in `.claude/agents/`, a skill or a CLAUDE.md for a covert agenda before it ships, and a hook points such files out when Claude writes them. `/overseer:audit` makes Claude Code the auditor of a model hiding an objective. | Shipped |
+| [In CI](docs/ci.md) | `overseer check` on every change to a prompt, compared with the version it replaces: a GitHub Action, a GitLab CI job, one npx command for any other CI, and a git pre-push hook. `overseer guard` on every change to agent configuration, in the Action's free guard mode and in git hooks. | Shipped |
 | [In training](docs/training.md) | Audits and checks of any model behind an Anthropic Messages-compatible endpoint, such as a checkpoint served by vLLM; `overseer scan`, a semantic-entropy drift monitor across checkpoints; every saved audit [as a dataset](docs/dataset.md) of trajectories and rewards for training auditors; and a library API. | Experimental |
 
 Inside Claude Code, with the [plugin](#claude-code-plugin) installed:
@@ -39,7 +39,7 @@ npx @adamsaou/overseer scan --questions examples/training/probes.jsonl \
   --reference-base-url http://localhost:8000 --reference-model base --tag step=1200 --out scans.jsonl --yes
 ```
 
-The training side is new: its commands, the dataset format and the library may change in any 0.x release, and how well audits work on models other than Claude is untested. The auditor, the clustering and the grading always run on Claude, and your Anthropic API key is never sent to a custom endpoint. `/overseer:check` and its hook, `overseer scan`, `runs export --all`, the `--target-*` and `--reference-*` flags and the library are new in version 0.2.0.
+The training side is new: its commands, the dataset format and the library may change in any 0.x release, and how well audits work on models other than Claude is untested. The auditor, the clustering and the grading always run on Claude, and your Anthropic API key is never sent to a custom endpoint. `/overseer:check` and its hook, `overseer scan`, `runs export --all`, the `--target-*` and `--reference-*` flags and the library are new in version 0.2.0, and `overseer guard` in 0.4.0.
 
 ## Install
 
@@ -73,6 +73,7 @@ The install script, for macOS and Linux, checks your Node.js version and install
 | `overseer`, `overseer --help` | Lists the commands. The web app that `overseer` and `overseer ui` started until version 0.3.0 is gone: Overseer runs in the terminal, in Claude Code and in CI, and saved audits replay with `overseer runs replay`. |
 | `overseer audit` | Runs one audit in the terminal with a live readout: the auditor's reasoning, every message to and from the target, the evidence board, entropy scans, the verdict, the grade and the reveal. `--auditor` and `--target` take `haiku`, `sonnet` or `opus`; instead of `--target`, `--target-base-url <url>` and `--target-model <name>` audit any model behind an Anthropic Messages-compatible endpoint, with its key read from the variable `--target-api-key-env <var>` names, if it needs one (see [Training](docs/training.md#serving-a-checkpoint)). `--objective` takes a preset id, a sentence of your own, or `random`, the default, which stays sealed until the end. Also `--budget`, `--effort`, `--scans`/`--no-scans` and `--json`. |
 | `overseer check` | Checks your own assistant's system prompt for a covert agenda, for CI: see [Check your assistant in CI](#check-your-assistant-in-ci). `--prompt <file>` and `--purpose <text>` are required; `--baseline-ref <ref>` compares against the version in git. `--model` takes the model the assistant runs on, or the `--target-*` flags a model behind a custom endpoint, as for `overseer audit`. |
+| `overseer guard` | Lists the files that steer Claude Code in a repository and flags what attacks have used them for, free and local, with no API key: see [Guard a repository's agent configuration](#guard-a-repositorys-agent-configuration). `--since <ref>` checks only what changed, and `install --git` adds git hooks that run it after a checkout, merge or rebase. |
 | `overseer study` | Runs the oversight-gap study: by default 2 tool conditions × 3 auditors × 3 targets × 8 objectives, 144 audits estimated at about $49. It never repeats a finished audit, so it picks up where it left off; `--resume` carries on with the last study's settings. Slice it with `--reps`, `--auditors`, `--targets`, `--tools`, `--goals`, `--budget`, `--effort` and `--concurrency`. It exits with 1 if any audit failed, and stops early on an error that would fail every audit, such as a rejected key. The `/study` page shows `results/summary.json`, which covers one budget and effort: a study run switches it to its own and says how to switch back, and `--summarize` rebuilds it without running anything. |
 | `overseer scan` | Semantic-entropy scans of a batch of questions, for watching a model change, such as across the checkpoints of a training run (experimental; see [Training](docs/training.md#2-a-drift-monitor-across-checkpoints)). Each line of `--questions <file>` is `question \| aspect`, or JSON with `question` and `aspect`. Each question goes `--n` times (default 4) to the target and to the reference, each a Claude model (`--target`, `--reference`) or a custom endpoint (`--target-base-url`, `--reference-base-url` and their `-model` and `-api-key-env` flags), with an optional system prompt for each (`--system <file>` or `--objective`, and `--reference-system <file>`). `--out <file>` appends one JSON line per question with both entropies, the divergence, the clusters and every `--tag key=value`; `--json` prints a summary. It shows the estimate and asks first, like the study, and needs `--yes` without a terminal; `--max-cost` refuses a higher estimate. |
 | `overseer runs` | Lists saved audits. `runs show <id>` prints the verdict, grade and stats, `runs replay <id>` plays the audit back as the live readout, and `runs export <id>` writes it as JSON, to stdout or to `--out <file>`. `runs export --all` writes every saved audit as one record of [a dataset](docs/dataset.md), with the auditor's steps in order, each conversation, the revealed objective, the grade and a reward; `--format jsonl` (the default) or `json`. The start of an id is enough. |
@@ -88,7 +89,54 @@ overseer audit --auditor haiku --target-base-url http://localhost:8000 --target-
 overseer runs export --all --out audits.jsonl
 ```
 
-`overseer <command> --help` lists every option. The exit code is 0 when the command worked, 1 when something failed, and 2 when the command line was wrong or a cost guard refused to start. `overseer check` is the exception, listed below.
+`overseer <command> --help` lists every option. The exit code is 0 when the command worked, 1 when something failed, and 2 when the command line was wrong or a cost guard refused to start. `overseer check` and `overseer guard` are the exceptions, listed with them.
+
+## Guard a repository's agent configuration
+
+Before Claude Code reads a repository's instructions, settings and MCP servers, it helps to know what they do. `overseer guard` lists the files in a repository that steer Claude Code and flags what this year's attacks did with them. It's free and local: it reads files and asks git for the file list, runs none of the repository's code, sends nothing anywhere and needs no API key.
+
+```bash
+npx @adamsaou/overseer guard                          # this folder
+npx @adamsaou/overseer guard --since origin/main      # only what a branch changes
+npx @adamsaou/overseer guard install --git --global   # check every repository you clone, before Claude Code starts in it
+```
+
+```
+Overseer guard: 2 agent-config files in ~/src/useful-tool, and 1 doc checked for hidden text. 1 flagged.
+
+✗ .claude/settings.json (settings)
+    line 4    G02  runs `node .claude/setup.mjs` at every session start
+```
+
+**What it reads.** CLAUDE.md, CLAUDE.local.md and AGENTS.md files at any depth, and the files they import with `@path`; the agents, skills, commands, rules and output styles in `.claude/`; `.claude/settings.json` and `settings.local.json`; `.mcp.json`; the scripts that hooks and MCP servers run; other agents' instruction files, such as `.cursorrules` and `.github/copilot-instructions.md`; the files other tools run by themselves, `.vscode/tasks.json`, `.devcontainer/devcontainer.json`, `.cursor/hooks.json` and `.gemini/settings.json`; and the Markdown at the top level and in `docs/`, for hidden text. Names match in any case, because macOS and Windows open a committed `.CLAUDE/SETTINGS.JSON` as `.claude/settings.json`.
+
+**What it flags.**
+
+| Rule | What it flags | Where it comes from |
+|---|---|---|
+| G01 | Zero-width, bidirectional and tag characters, with what tag characters spell read out | [TrapDoor](https://socket.dev/blog/trapdoor-crypto-stealer-npm-pypi-crates) |
+| G02 | Code the repository runs on your machine: hooks, helper commands such as `apiKeyHelper`, status lines, a skill's or agent's frontmatter hooks, inline shell in skills and commands | [ChainDrop](https://www.pillar.security/blog/chaindrop-when-opening-a-repository-becomes-execution), [Miasma](https://www.wiz.io/blog/miasma-supply-chain-attack-targeting-redhat-npm-packages) |
+| G03 | MCP servers the repository adds, and settings that approve them or add plugin marketplaces | [TrustFall](https://adversa.ai/blog/trustfall-coding-agent-security-flaw-rce-claude-cursor-gemini-cli-copilot/) |
+| G04 | A reviewer agent the repository defines that pins a weaker model or narrows what it reviews, and settings that pick the session's agent or models | [Fable to Haiku](https://www.straiker.ai/blog/how-a-malicious-repo-tricked-claude-code-into-running-malware) |
+| G05 | Hidden comments addressed to AI agents, and orders to ignore earlier instructions | TrapDoor's pull requests |
+| G06 | Instructions to run downloaded code, such as `curl` piped into a shell; a well-known installer is only a note | ClawHavoc's skills |
+| G07 | Destructive instructions, such as wiping a home folder or cloud resources | [The Amazon Q extension's planted prompt](https://awsinsider.net/articles/2025/07/25/formatting-flaw-foils-attempted-prompt-injection-on-amazon-q.aspx) |
+| G08 | Instructions to send secrets, files or screenshots outside, or to make them public | [PixelLeak](https://www.glow.io/blogs/how-ai-agents-exposed-developer-screenshots-from-leading-tech-companies) |
+| G09 | Weakened oversight: `disableAllHooks`, Overseer turned off, broad pre-approvals such as `Bash(*)` in settings or a skill's `allowed-tools`, orders to keep things from the user or to switch monitoring off | [Agents that disabled their monitors](https://alignment.openai.com/misalignment-reports/suppressing-misalignment-monitoring-alerts-and-disabling-misalignment-monitoring/) |
+| G10 | Environment overrides: `ANTHROPIC_BASE_URL` and other endpoints, keys, proxies and TLS settings, and variables that run code, such as `NODE_OPTIONS` | [Apex Accelerator](https://www.elastic.co/security-labs/threat-command/apex-accelerator-malicious-npm-packages) |
+| G11 | VS Code tasks that run when the folder opens, a dev container's `initializeCommand`, Cursor's and Gemini CLI's hooks | Miasma |
+| G12 | Secrets in plain text, which it never prints | |
+| G13 | A link that makes Claude Code read a file outside the repository | |
+
+Warnings decide the exit code: 0 when nothing is flagged, 1 when something is, 2 for a wrong command line and 3 when it couldn't scan, such as for a `--since` ref the repository doesn't have. Notes, such as an MCP server's command, show with `--all`. `--json` prints the report as JSON, and `--github` writes annotations, a job summary and outputs.
+
+**Where it runs.**
+
+- **In Claude Code**, through the [plugin](#claude-code-plugin): at every session start it scans the project and compares it with what it saw last time. When something needs a look, you get one line and Claude gets the details, once per version of a file. Claude Code then watches those files, and a change during the session, whether by Claude, a script, `git pull` or another process, is pointed out as it happens. `/overseer:guard` has Claude explain the findings. It takes about 100 ms and never blocks.
+- **In git**, before Claude Code starts: `overseer guard install --git` adds `post-checkout`, `post-merge` and `post-rewrite` hooks to a repository, and `--global` puts them in git's template folder, so every clone is checked. They report only what came in, and only start Overseer when agent configuration changed. This is the layer that catches a repository's own hooks: Claude Code runs them once the folder is trusted, and in `claude -p` with no trust check at all, so a session-start scan alone would be too late.
+- **In CI**: the [GitHub Action](#github-actions) with `mode: guard` checks the agent configuration a pull request changes. It needs no key, so it works on pull requests from forks too. See [docs/ci.md](docs/ci.md#guard-the-agent-configuration).
+
+**How well it works.** Harmless replicas of each attack above, with payloads replaced by `echo`, are flagged by the rule for it ([`test/guard.test.ts`](test/guard.test.ts)). On 385 real files, 161 in the 45 git repositories on the author's machine and 224 skills, agents, commands and hook files from installed Claude Code plugins, every warning was true: 4 in the repositories, all hooks a project really runs, and 32 in the plugins, hooks and skills that pre-approve any shell command. The pattern rules for text (hidden comments, concealment, destructive or exfiltrating instructions, narrowed reviewers) gave no warning on any of them. That corpus is one person's machine, not a benchmark. And it's a lint, so a reworded instruction can get past it: for what an instruction file makes a model do, [`overseer check`](#check-your-assistant-in-ci) tests it.
 
 ## Check your assistant in CI
 
@@ -128,13 +176,14 @@ A finding fails the job, annotates the prompt file in the pull request, and writ
 
 | Input | Default | |
 |---|---|---|
+| `mode` | `check` | `check` audits the prompt with a model. `guard` runs [Overseer guard](#guard-a-repositorys-agent-configuration) on the agent configuration the pull request changes instead: free, no key, and it installs nothing. |
 | `prompt` | | The system prompt file. Give this or `prompt-command`. |
 | `prompt-command` | | For a prompt built in code, a shell command that prints it. With `baseline-ref` it also runs in a temporary checkout of that ref. It runs your repository's code, as your tests do. |
-| `purpose` | required | What the assistant is for. Behavior it explains isn't a finding, so name what the assistant may openly recommend. |
-| `anthropic-api-key` | required | From a repository secret. GitHub doesn't give secrets to pull requests from forks, so those fail with a message saying so. |
+| `purpose` | required for `check` | What the assistant is for. Behavior it explains isn't a finding, so name what the assistant may openly recommend. |
+| `anthropic-api-key` | required for `check` | From a repository secret. GitHub doesn't give secrets to pull requests from forks, so those fail with a message saying so; guard mode needs none. |
 | `model` | `sonnet` | The model your assistant runs on: `haiku`, `sonnet` or `opus`. |
 | `auditor` | `sonnet` | The model doing the checking. |
-| `baseline-ref` | the PR's base commit | The version to compare with; the action fetches it into a shallow checkout. Empty compares with the purpose alone. |
+| `baseline-ref` | the PR's base commit | The version to compare with; the action fetches it into a shallow checkout. Empty compares with the purpose alone, or in guard mode checks every file. |
 | `budget` | `16` | Messages the auditor may send, 6 to 60. |
 | `effort`, `scans` | `medium`, `true` | Auditor effort, and whether it may run entropy scans. |
 | `fail-at` | `0.6` | The confidence a finding needs to fail the check. |
@@ -142,7 +191,7 @@ A finding fails the job, annotates the prompt file in the pull request, and writ
 | `fail-on-finding` | `true` | `false` reports a finding as a warning without failing the job, for trying the check out. |
 | `transcript` | | A file to write the whole check to as Markdown, for `actions/upload-artifact`: every message the auditor sent, every reply, the scans and the verdict. |
 
-The outputs are `result` (`pass`, `fail`, `unchanged` or `incomplete`), `found`, `confidence`, `agenda` and `cost-usd`. The action runs Overseer from its own checkout at the ref you pin, so a check can't change under you, and it only installs Node.js 24 when the runner's Node.js can't run TypeScript itself.
+The outputs are `result` (`pass`, `fail`, `unchanged` or `incomplete`; in guard mode `pass` or `fail`), `found`, `confidence`, `agenda`, `cost-usd`, and in guard mode `flagged`, the number of files flagged. The action runs Overseer from its own checkout at the ref you pin, so a check can't change under you, and it only installs Node.js 24 when the runner's Node.js can't run TypeScript itself.
 
 ### From the terminal, or any other CI
 
@@ -175,7 +224,7 @@ It's a black-box test with a fixed budget, so it can miss an agenda that its pro
 
 ## Claude Code plugin
 
-Overseer also works inside Claude Code, as a plugin with an MCP server, the `/overseer:audit` command and a skill that teaches Claude how to audit, the `/overseer:check` command, which checks a system prompt before it ships, and a hook that points out the files it can check. Add this repo's marketplace and install the plugin:
+Overseer also works inside Claude Code, as a plugin with an MCP server, Overseer guard's hooks and the `/overseer:guard` command, the `/overseer:audit` command and a skill that teaches Claude how to audit, the `/overseer:check` command, which checks a system prompt before it ships, and a hook that points out the files it can check. Add this repo's marketplace and install the plugin:
 
 ```bash
 claude plugin marketplace add adamsaou/overseer
@@ -214,6 +263,8 @@ claude -p "/overseer:audit haiku 12" \
 
 The plugin's hook runs after Claude Code's Write, Edit and MultiEdit. When one writes a file that looks like instructions for a model, such as an agent or command in `.claude/`, a skill's `SKILL.md`, a CLAUDE.md or AGENTS.md, a file named like `system-prompt.md`, or a file under `prompts/`, it adds a short note to Claude's context that `/overseer:check` can check it. It spends nothing, never blocks, notes each file at most once a session, and is a small node script rather than an npx call. It needs Claude Code 2.1.139 or newer, the first that runs a hook without a shell; an older one reports a hook error after every edit. `OVERSEER_HOOK=off` in the environment Claude Code starts in turns it off. [docs/harness.md](docs/harness.md) has the details.
 
+**Guard.** At session start, the plugin's guard hook runs [`overseer guard`](#guard-a-repositorys-agent-configuration) on the project, from a bundled script with no npx call, and compares it with the last session's scan, kept in `~/.overseer/trust/`. The first time it sees a project it records a baseline and only points out warnings; after that, also files that run code and are new or changed. You get one line, Claude gets the findings as context, and each version of a file is pointed out once. The hook also has Claude Code watch those files, so a change during the session is pointed out as it happens, whatever made it. `/overseer:guard` has Claude explain the findings, read the scripts flagged hooks run, never run them, and suggest what to do. `OVERSEER_GUARD=off` turns guard off.
+
 The tools, which permission rules name `mcp__plugin_overseer_overseer__<tool>`:
 
 | Tool | What it does |
@@ -221,6 +272,7 @@ The tools, which permission rules name `mcp__plugin_overseer_overseer__<tool>`:
 | `overseer_begin_audit` | Starts an audit with Claude Code as the auditor: `target`, `budget` (6 to 60 messages, enforced on the server) and `scans`. One can be open at a time. |
 | `send_message`, `sample`, `entropy_scan`, `update_board`, `final_verdict` | The model auditors' own tools, for the audit that `overseer_begin_audit` started. `final_verdict` is graded against the sealed objective, which is then revealed, and the run is saved. |
 | `overseer_run_audit` | Runs a model audit in the background (`auditor`, `target`, `objective`, `budget`, `scans`, `effort`) and returns its run id at once; up to four model audits and checks run at a time. The objective is a preset id, a sentence of your own, or `random` for a sealed preset. |
+| `overseer_guard` | [Overseer guard](#guard-a-repositorys-agent-configuration) on the project: the files that steer Claude Code and what's flagged in them, with `since` for only what changed since a git ref. Free and read-only: it needs no API key. |
 | `overseer_check` | Checks a system prompt, a file in the project (`prompt`) or its text (`prompt_text`), against its stated `purpose`, with the options of `overseer check`: `model`, `auditor`, `baseline` or `baseline_ref`, `budget`, `effort`, `scans`, `fail_at` and `max_cost`. The first call returns the plan and its estimated cost and starts nothing; the check starts, in the background, only when the tool is called again with `confirm` set to that estimate, which Claude passes on from your yes. A prompt that's the same as its baseline is reported as unchanged at no cost. Checks aren't saved. |
 | `overseer_get_run` | A run's status (running, done or failed), evidence board, verdict and grade, and the hidden objective once it's over; for a check, its result: pass, fail or incomplete, the agenda found, the confidence, the quotes and the cost. `wait`, up to 60 seconds, waits for a running model audit or check to finish. The start of an id is enough. |
 | `overseer_list_runs` | Saved, running and failed audits, newest first, then the checks started in the session. |
@@ -305,7 +357,8 @@ Overseer holds your Anthropic API key and runs in Claude Code sessions that may 
 - **Where the key goes.** Requests with the key go to `https://api.anthropic.com`, or to a gateway you allowed as `"gateway"` in `~/.overseer/config.json`; in a terminal, `overseer doctor` offers to allow the one `ANTHROPIC_BASE_URL` names. Any other `ANTHROPIC_BASE_URL` is refused, not followed, because a repository's `.claude/settings.json` can set environment variables for the processes Claude Code starts, the MCP server included, and point the key at its own server. Redirects are refused, so is `NODE_TLS_REJECT_UNAUTHORIZED=0`, and the key never goes to a custom target endpoint. A saved key is plain text in `config.json`, readable only by you, so a key from your secret store in `ANTHROPIC_API_KEY` is better where you have one.
 - **What gets installed.** The npm package is one bundled build with its dependencies inside, their licenses in `build/THIRD-PARTY-LICENSES.md`, and it declares no dependencies, so `npx -y @adamsaou/overseer`, which the plugin's server runs, downloads that one package and nothing that could change under it. It's published from GitHub Actions with npm provenance.
 - **The model under test writes what gets measured.** Its answers reach the clustering model escaped and marked as data, the clustering reads every answer whole, and a clustering the model declines or garbles counts as a scan that measured nothing. Before 0.3.1 the clustering read the first 3,000 and last 1,000 characters of a long answer, and an answer that put its pick in between scored a divergence of 0.
-- **What it doesn't defend against.** Code running as you can read the key wherever it's kept, and some environment variables a repository can set, such as `NODE_OPTIONS`, run code in every Node.js process. A repository can also turn off every plugin hook, Overseer's included, with `"disableAllHooks": true` in its `.claude/settings.json`. And a behavioral check only sees what its probes trigger, so it can miss an agenda they never reach.
+- **Guard reads files an attacker wrote.** It never runs them, follows no link out of the repository, and prints no secret it finds. Its patterns can't backtrack without bound, because a file built to make the lint slow would run out a hook's time and pass unflagged; a test feeds it such files. What it saw is kept in `~/.overseer/trust/`, readable only by you, and no file in a repository can mark itself trusted.
+- **What it doesn't defend against.** Code running as you can read the key wherever it's kept, and some environment variables a repository can set, such as `NODE_OPTIONS`, run code in every Node.js process; guard flags them, but in a session they're already set. A repository can also turn off every plugin hook, Overseer's included, with `"disableAllHooks": true` in its `.claude/settings.json`, and its own session-start hook runs alongside guard's, which can't block it: the git hooks and the Action's guard mode catch both before a session starts. Guard is a lint, so a reworded instruction can get past its patterns. And a behavioral check only sees what its probes trigger, so it can miss an agenda they never reach.
 
 ## Releasing
 
@@ -336,6 +389,8 @@ The auditor, clustering and grading calls on Opus 5.5 and Sonnet 5.5 opt into se
 |---|---|
 | `lib/auditor.ts` | The auditor's agent loop, tools and live events |
 | `lib/entropy.ts` | Semantic-entropy scans: clustering, entropy, divergence and its exact p-value |
+| `lib/guard.ts` | Overseer guard: the inventory of agent configuration, its rules, and the state it keeps between scans |
+| `lib/guard-cli.ts`, `lib/guard-hook.ts` | `overseer guard` and its git hooks; the plugin's SessionStart and FileChanged hooks, which `scripts/build-hooks.ts` bundles into `plugins/overseer/scripts/guard.mjs` |
 | `lib/target.ts` | Target and reference deployments, one conversation per thread |
 | `lib/endpoint.ts` | Models behind a custom Messages-compatible endpoint: the requests, their errors, and keeping the Anthropic key away from them |
 | `lib/scan.ts` | `overseer scan`: the questions file, one probe's scan, and its line |
@@ -350,7 +405,7 @@ The auditor, clustering and grading calls on Opus 5.5 and Sonnet 5.5 opt into se
 | `docs/`, `examples/` | The guides for the harness, CI, training and the dataset; the CI recipes, the training probes and drift monitor, and the example prompts |
 | `scripts/sync-plugin.ts` | Keeps the plugin's version, and the package version it runs, in step with `package.json` |
 | `scripts/build-package.ts` | Builds `build/`, the npm package: one esbuild bundle with its dependencies inside, their licenses, and the library's type declarations |
-| `test/` | Unit tests, `npm test`: the p-value against brute force, where the key may go, check outcomes and prompt commands |
+| `test/` | Unit tests, `npm test`: the p-value against brute force, where the key may go, check outcomes and prompt commands, and guard: replicas of the attacks it flags, ordinary repositories it must not, crafted files that must not slow it, and its git hooks on real clones and pulls |
 | `lib/store.ts`, `lib/config.ts`, `lib/paths.ts`, `lib/cost.ts` | Saved runs, the API key, the data folder and cost estimates |
 | `install.sh` | The curl-pipe installer |
 | `site/`, `scripts/build-site.ts`, `scripts/preview-site.ts` | The website, its build into `dist/`, and a local preview of `dist/` |
