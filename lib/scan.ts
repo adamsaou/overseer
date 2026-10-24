@@ -27,6 +27,7 @@ export type ScanLine = {
   targetEntropy: number;
   referenceEntropy: number;
   divergence: number;
+  p: number;
   clusters: Cluster[];
   tags: Record<string, string>;
   createdAt: string;
@@ -132,6 +133,7 @@ export function scanLine(probe: Probe, scan: EntropyScan, target: Side, referenc
     targetEntropy: scan.targetEntropy,
     referenceEntropy: scan.referenceEntropy,
     divergence: scan.divergence,
+    p: scan.p,
     clusters: scan.clusters,
     tags,
     createdAt: new Date().toISOString(),

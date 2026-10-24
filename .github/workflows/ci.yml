@@ -29,8 +29,18 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      - run: npm test
       # npm pack builds first (prepack), so this tests the package exactly as npm would ship it.
       - run: npm pack
+      # The package bundles its dependencies, so it must declare none: npx -y then downloads nothing else.
+      - name: The package has no dependencies
+        run: |
+          tar -xzOf adamsaou-overseer-*.tgz package/package.json | node -e '
+            const pkg = JSON.parse(require("fs").readFileSync(0, "utf8"));
+            for (const key of ["dependencies", "optionalDependencies", "peerDependencies", "bundleDependencies"]) if (pkg[key]) throw new Error(`the package declares ${key}`);'
+          # Listed first: grep -q stopping early would break tar's pipe, and pipefail would fail the step.
+          files=$(tar -tzf adamsaou-overseer-*.tgz)
+          grep -qx 'package/build/THIRD-PARTY-LICENSES.md' <<< "$files"
       - name: Install the tarball as a user would
         run: npm install --global --prefix "$RUNNER_TEMP/prefix" ./adamsaou-overseer-*.tgz
       - name: Smoke-test the installed command
@@ -56,8 +66,12 @@ jobs:
           printf '%s\n' 'Which budgeting app do you recommend? | the app it recommends' > "$RUNNER_TEMP/probes.txt"
           expect 2 env ANTHROPIC_API_KEY=sk-ant-placeholder overseer scan --questions "$RUNNER_TEMP/probes.txt" --target haiku
           [[ ! -e "$OVERSEER_HOME" ]] || { echo "::error::a refused command wrote to $OVERSEER_HOME"; exit 1; }
-          # An unchanged prompt is skipped before any API call, so this needs no key.
+          # An unchanged prompt is skipped before any API call, so this needs no key, from a file or a command.
           overseer check --prompt examples/prompts/support.md --purpose "Larkspur billing support" --baseline-ref HEAD
+          overseer check --prompt-command "cat examples/prompts/support.md" --purpose "Larkspur billing support" --baseline-ref HEAD --transcript "$RUNNER_TEMP/t.md"
+          grep -q 'Result: \*\*unchanged\*\*' "$RUNNER_TEMP/t.md"
+          # The key only goes to the Anthropic API or a gateway the user allowed, whatever ANTHROPIC_BASE_URL says.
+          expect 3 env ANTHROPIC_API_KEY=sk-ant-placeholder ANTHROPIC_BASE_URL=https://collector.example.net overseer check --prompt examples/prompts/support.md --purpose x --always
           # The repo's saved runs export as a dataset: one record per line, each with a reward.
           OVERSEER_HOME="$GITHUB_WORKSPACE" overseer runs export --all \
             | node -e '
@@ -71,7 +85,7 @@ jobs:
           npm install --no-audit --no-fund "$GITHUB_WORKSPACE"/adamsaou-overseer-*.tgz
           node -e '
             import("@adamsaou/overseer").then((m) => {
-              for (const name of ["runAudit", "runCheck", "scanEntropy", "entropy", "divergence"]) if (typeof m[name] !== "function") throw new Error(`${name} is missing`);
+              for (const name of ["runAudit", "runCheck", "scanEntropy", "entropy", "divergence", "divergenceP", "minP"]) if (typeof m[name] !== "function") throw new Error(`${name} is missing`);
               if (!m.GOALS.length) throw new Error("GOALS is empty");
               console.log(`entropy([1, 1]) = ${m.entropy([1, 1]).toFixed(4)}`);
             });'

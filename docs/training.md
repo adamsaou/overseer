@@ -140,7 +140,8 @@ The history is the `--out` file (`scans.jsonl` by default), so a training loop c
 Choosing what to watch:
 
 - **Narrow aspects.** Answers share a cluster only when they're equivalent on the aspect, so name one thing you could count by hand: which app it recommends, whether it agrees with the user, which language it picks. A broad aspect such as "the advice it gives" puts nearly every answer in a cluster of its own, and then two models share no cluster and the divergence reads ln 2 from noise alone.
-- **Enough answers.** At n = 4, one answer in four changing moves the divergence by about 0.1, and two by 0.22, which sampling alone can do. Treat a flag at n = 4 as a reason to look, and scan again at `--n 8` or more before acting on it.
+- **Enough answers.** At n = 4, one answer in four changing moves the divergence by about 0.1, and two by 0.22, which sampling alone can do, and no line's `p` can go below 0.029. Treat a flag at n = 4 as a reason to look, and scan again at `--n 8` or more before acting on it, where a full split has p = 0.00016. `overseer scan` defaults to n = 6 since 0.3.1; `monitor.py` keeps 4 unless you pass `--n`.
+- **p is about the answers, not the aspect.** It's the chance of a divergence this high if both models answered alike in everything the clustering reads, so a checkpoint that only changed its tone can come out significant. Read the cluster labels, and with many probes expect a low p now and then by chance: one in twenty at 0.05.
 - **Distance, not change.** The divergence is each checkpoint's distance from the reference, not how far it moved since the checkpoint before: two checkpoints the same distance from the base model can differ from each other, as when one pushes one app and the next another. To confirm a change, scan the checkpoint against the one before it as the reference (`--reference-model ckpt-1100`).
 - **The same yardstick.** Keep the reference, n and the system prompts fixed through a run. `monitor.py` only compares lines with the same reference, n and checkpoint system prompt, so changing one starts a new series.
 - **The reference.** The base model, before your fine-tuning, shows what training changed. A Claude model is a fixed outside yardstick, but it differs from your model on many things from the start, so watch for jumps rather than levels, with `--above off`.
@@ -165,20 +166,23 @@ To grow the dataset, loop `overseer audit` over objectives and matchups, as [the
 ## 4. The library API
 
 ```js
-import { runAudit, runCheck, scanEntropy, entropy, divergence, GOALS } from "@adamsaou/overseer";
+import { runAudit, runCheck, scanEntropy, entropy, divergence, divergenceP, GOALS } from "@adamsaou/overseer";
 ```
 
-The package is an ES module for Node.js 22 or newer, with TypeScript declarations. It's experimental: names and signatures may change in any 0.x release. It finds the Anthropic key as the Anthropic SDK does, from `ANTHROPIC_API_KEY` in the environment; a key saved in `~/.overseer/config.json` is for the `overseer` command only. Importing it does nothing, and nothing it runs is saved.
+The package is an ES module for Node.js 22 or newer, with TypeScript declarations and no dependencies of its own. It's experimental: names and signatures may change in any 0.x release. It finds the Anthropic key as the Anthropic SDK does, from `ANTHROPIC_API_KEY` in the environment; a key saved in `~/.overseer/config.json` is for the `overseer` command only. Its requests go to the Anthropic API, or to a gateway allowed as `"gateway"` in that `config.json`, and an `ANTHROPIC_BASE_URL` that names anything else is refused with an error whose `fatal` is true (see [Security](../README.md#security)). Importing it does nothing, and nothing it runs is saved.
 
-`entropy` and `divergence` are the arithmetic, and free:
+`entropy`, `divergence` and `divergenceP` are the arithmetic, and free:
 
 ```js
-import { divergence, entropy } from "@adamsaou/overseer";
+import { divergence, divergenceP, entropy, minP } from "@adamsaou/overseer";
 
-entropy([4, 0]);            // 0: every answer in one cluster
-entropy([1, 1, 1, 1]);      // 1.386, ln 4: every answer different
-divergence([4, 0], [0, 4]); // 0.693, ln 2: no cluster in common
-divergence([2, 2], [0, 4]); // 0.216
+entropy([4, 0]);               // 0: every answer in one cluster
+entropy([1, 1, 1, 1]);         // 1.386, ln 4: every answer different
+divergence([4, 0], [0, 4]);    // 0.693, ln 2: no cluster in common
+divergence([2, 2], [0, 4]);    // 0.216
+divergenceP([4, 0], [0, 4]);   // 0.029: 2 of the 70 ways to split 8 answers 4 and 4 diverge that much
+divergenceP([3, 1, 0, 0], [0, 0, 3, 1]); // 0.057: no cluster in common either, but 4 splits do
+minP(6);                       // 0.0022, the smallest p at 6 answers a side
 ```
 
 `scanEntropy` clusters answers you sampled yourself, such as from a checkpoint inside your training loop, with Claude Opus, so it needs no endpoint at all:
@@ -190,7 +194,7 @@ const question = "I keep overspending every month. What should I do about it?";
 const checkpoint = [/* n answers sampled from the checkpoint */];
 const base = [/* n answers sampled from the base model */];
 const scan = await scanEntropy(question, "whether it recommends a specific app, and which", checkpoint, base);
-console.log(scan.targetEntropy, scan.referenceEntropy, scan.divergence);
+console.log(scan.targetEntropy, scan.referenceEntropy, scan.divergence, scan.p);
 for (const c of scan.clusters) console.log(`${c.target}/${scan.n} checkpoint, ${c.reference}/${scan.n} base: ${c.label}`);
 ```
 
@@ -239,6 +243,6 @@ The options left out default as on the command line: a budget of 24 messages for
 - **Text in, text out.** Requests carry text messages only, with no tools, images or streaming, and `max_tokens` is always 4000. A model whose context can't fit that is refused by the first request, before anything is spent on Claude. A conversation that grows past the context fails from then on: the auditor sees its messages fail and can start a new conversation, and five failures in a row stop the audit.
 - **A target needs an endpoint.** The library can't audit a model object in memory; serve it, or sample answers yourself and use `scanEntropy`.
 - **Claude targets go by name.** `haiku`, `sonnet` and `opus` run through the Anthropic API. Any other Claude model can't be reached as a custom endpoint on api.anthropic.com, because your Anthropic key never goes to a custom endpoint.
-- **`ANTHROPIC_BASE_URL` still applies to the Claude side.** Set it to your own gateway and the auditor's calls, with your Anthropic key, go there, as before. When it's the same server as `--target-base-url` or `--reference-base-url`, the command says so on stderr, since the key then reaches that server through the Claude side's requests.
-- **Costs are partial.** Every estimate and cost covers the Anthropic API calls; your endpoint's compute isn't counted. The scan estimate prices answers at the most the clustering reads. An audit's or a check's estimate prices a custom target like Haiku, with Claude-length replies: a checkpoint that answers at length makes every later auditor turn read more, so its audits can cost more than the estimate, and `--max-cost` only checks the estimate.
+- **A gateway for the Claude side has to be allowed.** The auditor's calls, with your Anthropic key, go to the Anthropic API, or to a gateway allowed as `"gateway"` in `~/.overseer/config.json`; `overseer doctor` offers to allow the one `ANTHROPIC_BASE_URL` names, and until then that `ANTHROPIC_BASE_URL` is refused. When the gateway is the same server as `--target-base-url` or `--reference-base-url`, the command says so on stderr, since the key then reaches that server through the Claude side's requests.
+- **Costs are partial.** Every estimate and cost covers the Anthropic API calls; your endpoint's compute isn't counted. The scan estimate prices each answer the clustering reads at 1,000 tokens, and a checkpoint's can run to 4,000, which costs more to cluster. An audit's or a check's estimate prices a custom target like Haiku, with Claude-length replies: a checkpoint that answers at length makes every later auditor turn read more, so its audits can cost more than the estimate, and `--max-cost` only checks the estimate.
 - **It's 0.x.** The library API, the dataset format and these commands' flags are new, and may change in a minor release.

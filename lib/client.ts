@@ -1,6 +1,11 @@
+import { readFileSync } from "node:fs";
 import Anthropic, { type ClientOptions } from "@anthropic-ai/sdk";
+import { configFile, dataHome } from "./paths.ts";
+
+export const ANTHROPIC_API = "https://api.anthropic.com";
 
 let instance: Anthropic | undefined;
+let instanceBase: string | undefined;
 let apiKey: string | undefined;
 let logLevel: ClientOptions["logLevel"];
 
@@ -8,10 +13,81 @@ let logLevel: ClientOptions["logLevel"];
 // carries the MCP protocol and overseer audit --json. Every level goes to stderr instead.
 const logger = { error: console.error, warn: console.error, info: console.error, debug: console.error };
 
-// Created on first use so the server can start, and explain what's missing, without credentials.
+// Created on first use so the server can start, and explain what's missing, without credentials. The
+// address is passed in, never left to the SDK, which would take ANTHROPIC_BASE_URL or a profile's; see
+// apiBase. A redirect is an error, so a gateway can't send the key on to somewhere else.
 export function anthropic(): Anthropic {
-  instance ??= new Anthropic({ apiKey, maxRetries: 4, logger, logLevel });
+  const base = apiBase();
+  if (!instance || base !== instanceBase) {
+    instance = new Anthropic({ apiKey, baseURL: base, maxRetries: 4, logger, logLevel, fetchOptions: { redirect: "error" } });
+    instanceBase = base;
+  }
   return instance;
+}
+
+// Refusals name what to change, and stop an audit like any error no retry can fix.
+const refusal = (message: string) => Object.assign(new Error(message), { code: "UNSAFE_ENV", fatal: true });
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+// An address in front of /v1/messages, as origin and path with no trailing slash, or null for anything else.
+export function baseOf(text: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(text.trim());
+  } catch {
+    return null;
+  }
+  if ((url.protocol !== "https:" && url.protocol !== "http:") || url.username || url.password || url.search || url.hash) return null;
+  return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
+}
+
+/** The gateway address the key may go to, normalized, or an error saying why it can't be one. */
+export function checkGateway(text: string, where: string): string {
+  const base = baseOf(text);
+  if (!base) throw refusal(`${where} isn't the web address in front of /v1/messages, such as https://llm.example.com.`);
+  const { protocol, hostname } = new URL(base);
+  if (protocol === "http:" && !LOOPBACK.has(hostname)) {
+    throw refusal(`${where} has to start with https://, so the key isn't sent in the clear. http:// is only for a gateway on this machine.`);
+  }
+  return base;
+}
+
+/**
+ * "gateway" in config.json: an LLM gateway the user allows the key to go to instead of the Anthropic API,
+ * as the address in front of /v1/messages. null when there's none, or config.json is missing or unreadable.
+ */
+export function savedGateway(home = dataHome()): string | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(readFileSync(configFile(home), "utf8"))?.gateway;
+  } catch {
+    return null;
+  }
+  if (value === undefined || value === null || value === "") return null;
+  return checkGateway(typeof value === "string" ? value : "", `"gateway" in ${configFile(home)}`);
+}
+
+/**
+ * Where requests with the key go: the Anthropic API, or the gateway in config.json. ANTHROPIC_BASE_URL
+ * can't choose on its own, because a repository's .claude/settings.json can set it for every process Claude
+ * Code starts, this one included, and point the key at a server of its own. So one naming any other address
+ * is refused, as is a process that doesn't check certificates.
+ */
+export function apiBase(home = dataHome()): string {
+  if (process.env.NODE_TLS_REJECT_UNAUTHORIZED === "0") {
+    throw refusal(
+      "NODE_TLS_REJECT_UNAUTHORIZED=0 turns off certificate checks, so anyone between you and the API could read your key, and Overseer won't send it. Unset it. For a proxy with its own certificate, give Node.js the certificate with NODE_EXTRA_CA_CERTS instead.",
+    );
+  }
+  const gateway = savedGateway(home);
+  const asked = process.env.ANTHROPIC_BASE_URL?.trim();
+  if (!asked) return gateway ?? ANTHROPIC_API;
+  const base = baseOf(asked);
+  if (base === ANTHROPIC_API || (base && base === gateway)) return base;
+  const allowed = gateway ? `${ANTHROPIC_API} or your gateway, ${gateway}` : ANTHROPIC_API;
+  throw refusal(
+    `ANTHROPIC_BASE_URL is set to ${asked}, so your API key would go there, and Overseer only sends it to ${allowed}. A repository's .claude/settings.json can set ANTHROPIC_BASE_URL to collect keys, so unset it unless you set it yourself. If it's your gateway, allow it: run overseer doctor in a terminal, or put "gateway": "${base ?? asked}" in ${configFile(home)}.`,
+  );
 }
 
 // At info and debug the SDK logs every request, the target's system prompt and its hidden objective

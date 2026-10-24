@@ -1,7 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { anthropic, describeError, isFatal } from "./client.ts";
 import type { CustomModel } from "./endpoint.ts";
-import { formatScan, scanEntropy, type EntropyScan } from "./entropy.ts";
+import { ClusteringError, formatScan, scanEntropy, type EntropyScan } from "./entropy.ts";
 import { grade, ungraded, type Grade } from "./grader.ts";
 import { EFFORTS, MODELS, addUsage, costOf, emptyUsage, fallbackParams, isModelKey, type Effort, type ModelKey, type Usage } from "./models.ts";
 import { Target, modelName, ready, targetModel, type TargetModel } from "./target.ts";
@@ -9,8 +9,12 @@ import { Target, modelName, ready, targetModel, type TargetModel } from "./targe
 export type Hypothesis = { text: string; confidence: number };
 // found is set by checks only: whether the auditor found an agenda at all, which an audit takes as given.
 export type Verdict = { objective: string; confidence: number; evidence: string[]; forced: boolean; found?: boolean };
-/** costUsd counts calls to the Anthropic API only, so a custom endpoint's own cost isn't in it. */
-export type AuditStats = { turns: number; targetMessages: number; scans: number; seconds: number; costUsd: number; fallbackUsed: boolean };
+/**
+ * costUsd counts calls to the Anthropic API only, so a custom endpoint's own cost isn't in it.
+ * clusteringFailures counts scans whose clustering was declined or unreadable, which answers can be
+ * written to cause; runs saved before 0.3.1 don't have it.
+ */
+export type AuditStats = { turns: number; targetMessages: number; scans: number; clusteringFailures?: number; seconds: number; costUsd: number; fallbackUsed: boolean };
 
 export type AuditEvent =
   // target is a model key, or model@host for a custom endpoint.
@@ -308,7 +312,17 @@ export async function runCheck(options: CheckOptions, emit: (event: AuditEvent) 
 
 // What differs between an audit and a check: who the auditor talks to, its brief and its tools.
 type Setup = { target: Target; reference: Target | null; system: string; tools: Anthropic.Beta.BetaTool[]; checking: boolean };
-type Investigation = { verdict: Verdict | null; board: Hypothesis[]; turns: number; used: number; scans: number; usage: Usage; scanUsage: Usage; fallbackUsed: boolean };
+type Investigation = {
+  verdict: Verdict | null;
+  board: Hypothesis[];
+  turns: number;
+  used: number;
+  scans: number;
+  clusteringFailures: number;
+  usage: Usage;
+  scanUsage: Usage;
+  fallbackUsed: boolean;
+};
 
 function statsOf(opts: Settled, run: Investigation, started: number, target: Target, reference: Target | null, gradeUsage = emptyUsage()): AuditStats {
   const cost =
@@ -321,6 +335,7 @@ function statsOf(opts: Settled, run: Investigation, started: number, target: Tar
     turns: run.turns,
     targetMessages: run.used,
     scans: run.scans,
+    clusteringFailures: run.clusteringFailures,
     seconds: Math.round((Date.now() - started) / 1000),
     costUsd: Number(cost.toFixed(4)),
     fallbackUsed: run.fallbackUsed,
@@ -332,7 +347,7 @@ async function investigate(opts: Settled, setup: Setup, emit: (event: AuditEvent
   const usage = emptyUsage();
   const scanUsage = emptyUsage();
   // scanBatches names scan threads and counts every attempt, so a failed scan's threads are never reused.
-  const state = { used: 0, probes: 0, samples: 0, scanBatches: 0, scans: 0, board: [] as Hypothesis[], verdict: null as Verdict | null, fallbackUsed: false };
+  const state = { used: 0, probes: 0, samples: 0, scanBatches: 0, scans: 0, clusteringFailures: 0, board: [] as Hypothesis[], verdict: null as Verdict | null, fallbackUsed: false };
   const left = () => opts.budget - state.used;
   const budgetNote = () => `[${left()} of ${opts.budget} target messages left]`;
   const messages: Anthropic.Beta.BetaMessageParam[] = [
@@ -441,6 +456,7 @@ async function investigate(opts: Settled, setup: Setup, emit: (event: AuditEvent
           } catch (err) {
             // The clustering model is only needed for scans, so even a model this key can't use isn't fatal.
             why = recover(err, false);
+            if (err instanceof ClusteringError) state.clusteringFailures++;
           }
         }
         if (!scan) {
@@ -548,5 +564,15 @@ async function investigate(opts: Settled, setup: Setup, emit: (event: AuditEvent
     messages.push({ role: "user", content });
   }
 
-  return { verdict: state.verdict, board: state.board, turns, used: state.used, scans: state.scans, usage, scanUsage, fallbackUsed: state.fallbackUsed };
+  return {
+    verdict: state.verdict,
+    board: state.board,
+    turns,
+    used: state.used,
+    scans: state.scans,
+    clusteringFailures: state.clusteringFailures,
+    usage,
+    scanUsage,
+    fallbackUsed: state.fallbackUsed,
+  };
 }

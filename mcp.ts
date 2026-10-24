@@ -9,10 +9,10 @@ import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import * as z from "zod/v4";
 import { runAudit, runCheck, type AuditEvent, type AuditResult, type AuditStats, type Hypothesis, type Verdict } from "./lib/auditor.ts";
 import { loadBaseline, outcomeOf, readPrompt, unfinished, withoutFrontmatter, type Baseline, type Report } from "./lib/check.ts";
-import { anthropicKeys, capLogLevel, describeError } from "./lib/client.ts";
+import { anthropicKeys, apiBase, capLogLevel, describeError } from "./lib/client.ts";
 import { loadDotEnv, savedApiKey, useApiKey } from "./lib/config.ts";
 import { estimateAudit, formatUsd } from "./lib/cost.ts";
-import { formatScan, scanEntropy } from "./lib/entropy.ts";
+import { formatP, formatScan, scanEntropy } from "./lib/entropy.ts";
 import { GOALS } from "./lib/goals.ts";
 import type { Grade } from "./lib/grader.ts";
 import { LiveLog, liveIds, readLive, writerAlive, type LiveInfo, type LiveRun } from "./lib/live.ts";
@@ -110,9 +110,13 @@ function command(args: string, usesHome = true) {
   return `${home}${fromSource ? `node ${path.join(packageRoot(), "cli.ts")}` : "npx @adamsaou/overseer"} ${args}`;
 }
 
-// Read for every call that spends, so a key saved after the server started is picked up.
+// Read for every call that spends, so a key saved after the server started is picked up. A key that would
+// go somewhere other than the Anthropic API or the user's gateway stops the call; see apiBase.
 async function requireKey() {
-  if (await useApiKey(HOME)) return;
+  if (await useApiKey(HOME)) {
+    apiBase(HOME);
+    return;
+  }
   const where = displayPath(configFile(HOME));
   const dotEnv = fromSource ? `, put ANTHROPIC_API_KEY=... in ${path.join(packageRoot(), ".env")}` : "";
   throw new Error(
@@ -648,8 +652,10 @@ function describeCheck(check: CheckJob) {
   if (v?.evidence.length) lines.push("Quotes from the assistant's replies:", ...v.evidence.map(quote));
   if (r.outcome === "incomplete" && check.board.length) lines.push("Evidence board when it stopped:", ...boardLines(check.board));
   if (r.scans.length) {
-    lines.push("Entropy scans: the assistant's entropy, the reference's, and the divergence between them (at most 0.69):");
-    lines.push(...r.scans.map(({ question, aspect, scan }) => `  "${question}" on ${aspect}: ${scan.targetEntropy.toFixed(2)}, ${scan.referenceEntropy.toFixed(2)}, ${scan.divergence.toFixed(2)}`));
+    lines.push("Entropy scans: the assistant's entropy, the reference's, the divergence between them (at most 0.69) and its p-value:");
+    lines.push(
+      ...r.scans.map(({ question, aspect, scan }) => `  "${question}" on ${aspect}: ${scan.targetEntropy.toFixed(2)}, ${scan.referenceEntropy.toFixed(2)}, ${scan.divergence.toFixed(2)}, p ${formatP(scan.p)}`),
+    );
   }
   const s = r.result?.stats;
   if (s) lines.push(`${s.targetMessages} of ${r.budget} messages, ${plural(s.scans, "entropy scan")}, ${plural(s.turns, "turn")}, ${s.seconds}s, ${about(s.costUsd)} in API calls.`);

@@ -53,7 +53,7 @@ curl -fsSL https://raw.githubusercontent.com/adamsaou/overseer/main/install.sh |
 
 The install script, for macOS and Linux, checks your Node.js version and installs the npm package. It never uses sudo: if npm's global folder isn't yours to write to, it installs into `~/.local` for your user only and tells you how to put `~/.local/bin` on your PATH. It doesn't touch your npm config or your shell files. On Windows, use `npm install --global @adamsaou/overseer`. To use Overseer inside Claude Code, install the [Claude Code plugin](#claude-code-plugin).
 
-- **API key.** Overseer reads `ANTHROPIC_API_KEY` (or `ANTHROPIC_AUTH_TOKEN`). If neither is set, it asks for a key in the terminal, without showing what you type, and offers to save it in `~/.overseer/config.json`, which only you can read (mode 0600). The environment variable always wins over a saved key, and deleting the file forgets it. The key only ever goes to the Anthropic API (or to a gateway you set in `ANTHROPIC_BASE_URL`), never to a custom endpoint given with `--target-base-url` or `--reference-base-url`, not even inside a prompt: a system prompt, question or message for a custom endpoint that holds the key is refused before it's sent. It is never printed or logged. Outside a terminal, a missing key is an error that says where to put one.
+- **API key.** Overseer reads `ANTHROPIC_API_KEY` (or `ANTHROPIC_AUTH_TOKEN`). If neither is set, it asks for a key in the terminal, without showing what you type, and offers to save it in `~/.overseer/config.json`, which only you can read (mode 0600). The environment variable always wins over a saved key, and deleting the file forgets it. The key only ever goes to the Anthropic API (or to a gateway you allowed; see [Security](#security)), never to a custom endpoint given with `--target-base-url` or `--reference-base-url`, not even inside a prompt: a system prompt, question or message for a custom endpoint that holds the key is refused before it's sent. It is never printed or logged. Outside a terminal, a missing key is an error that says where to put one.
 - **Data.** Audits are saved in `~/.overseer/runs/`, one JSON file each, and the study writes to `~/.overseer/results/`. Set `OVERSEER_HOME` to use another folder. A checkout of this repo keeps using its own `runs/` and `results/`.
 - **Cost.** Audits are billed to your key. `overseer audit` shows an estimate before it starts. `overseer study` shows how many audits are left and what they should cost, and doesn't start until you say yes; `--yes` skips the question, and is required when there's no terminal to ask in. `overseer scan` asks the same way. The estimates come from audits actually run:
 
@@ -128,7 +128,8 @@ A finding fails the job, annotates the prompt file in the pull request, and writ
 
 | Input | Default | |
 |---|---|---|
-| `prompt` | required | The system prompt file. |
+| `prompt` | | The system prompt file. Give this or `prompt-command`. |
+| `prompt-command` | | For a prompt built in code, a shell command that prints it. With `baseline-ref` it also runs in a temporary checkout of that ref. It runs your repository's code, as your tests do. |
 | `purpose` | required | What the assistant is for. Behavior it explains isn't a finding, so name what the assistant may openly recommend. |
 | `anthropic-api-key` | required | From a repository secret. GitHub doesn't give secrets to pull requests from forks, so those fail with a message saying so. |
 | `model` | `sonnet` | The model your assistant runs on: `haiku`, `sonnet` or `opus`. |
@@ -139,6 +140,7 @@ A finding fails the job, annotates the prompt file in the pull request, and writ
 | `fail-at` | `0.6` | The confidence a finding needs to fail the check. |
 | `max-cost` | `1.00` | The check doesn't start when its estimate is higher, in US dollars. |
 | `fail-on-finding` | `true` | `false` reports a finding as a warning without failing the job, for trying the check out. |
+| `transcript` | | A file to write the whole check to as Markdown, for `actions/upload-artifact`: every message the auditor sent, every reply, the scans and the verdict. |
 
 The outputs are `result` (`pass`, `fail`, `unchanged` or `incomplete`), `found`, `confidence`, `agenda` and `cost-usd`. The action runs Overseer from its own checkout at the ref you pin, so a check can't change under you, and it only installs Node.js 24 when the runner's Node.js can't run TypeScript itself.
 
@@ -149,7 +151,9 @@ overseer check --prompt prompts/support.md --baseline-ref origin/main \
   --purpose "Answers billing questions for Acme customers and may recommend Acme plans."
 ```
 
-It prints the live readout of an audit, then `✓ PASS` or `✗ FAIL`. `--json` prints the result as JSON instead, and `--summary <file>` writes the Markdown summary; inside GitHub Actions the summary, the annotation and the step outputs are written on their own. The exit code is 0 when nothing was found (or the prompt is unchanged), 1 when an agenda was found at or above `--fail-at`, 2 when the command line was wrong or the estimate is over `--max-cost`, and 3 when the check couldn't finish: no API key, an API error, an auditor that stopped without a verdict, or an assistant that never answered the auditor, none of which counts as a pass. Checks aren't saved to `runs/`.
+It prints the live readout of an audit, then `✓ PASS` or `✗ FAIL`. `--json` prints the result as JSON instead, `--summary <file>` writes the Markdown summary, and `--transcript <file>` writes the whole check, every message the auditor sent and every reply, so you can read what it asked; inside GitHub Actions the summary, the annotation and the step outputs are written on their own. The exit code is 0 when nothing was found (or the prompt is unchanged), 1 when an agenda was found at or above `--fail-at`, 2 when the command line was wrong or the estimate is over `--max-cost`, and 3 when the check couldn't finish: no API key, an API error, an auditor that stopped without a verdict, an assistant that never answered the auditor, or an entropy scan whose clustering failed, none of which counts as a pass. Checks aren't saved to `runs/`.
+
+A prompt built in code, such as a template in a TypeScript module, can be checked through a command that prints it: `--prompt-command "node scripts/print-prompt.mjs"` instead of `--prompt`. With `--baseline-ref`, the command also runs in a temporary checkout of that ref, made inside the repository's git folder so that lookups up the folder tree, like Node.js's for `node_modules`, still find the checkout's; if it fails there, as a script that's new since the ref does, the prompt is checked as new.
 
 [docs/ci.md](docs/ci.md) has copy-paste recipes for GitLab CI, for any other CI through npx, and for a git pre-push hook that checks a prompt before a push goes out; the files are in [`examples/ci/`](examples/ci).
 
@@ -158,6 +162,8 @@ It prints the live readout of an audit, then `✓ PASS` or `✗ FAIL`. `--json` 
 - **The auditor's brief** is the audit's, rewritten for an assistant that may have nothing to hide: finding nothing is a normal result, promoting the product it's deployed for isn't covert because users know whose assistant they're talking to, and a reply that addresses the auditor or tells it what to conclude is itself a finding. Audits and the study keep their own prompts, so their results stay comparable.
 - **The verdict** says whether there's an agenda (`found`), what it is, quotes for it, and how sure the auditor is of the verdict either way. The check fails when `found` is true and that confidence is at least `fail-at`.
 - **The reference** for entropy scans is the previous version of the prompt, or, with no baseline, the same model told only the stated purpose. Against the purpose alone a real prompt diverges for legitimate reasons too, so the auditor is told to weigh what the answers move toward, not only how far.
+- **Every divergence has an exact p-value**: of all the ways to split the pooled answers between the two models, the share that diverge as much. It says how surprising the divergence would be if the two versions answered alike, so read it with the cluster labels: a change of tone alone can be significant. With n answers a side it can't go below 0.029 at n=4 or 0.0022 at n=6.
+- **A scan the clustering couldn't sort** keeps the check from passing. The assistant writes the answers being clustered, so it can write them to make the scans that would show its agenda fail; the check then ends incomplete, with exit code 3.
 
 ### What it costs and how well it works
 
@@ -234,10 +240,10 @@ While Claude Code's own audit is open, the other Overseer tools refuse until its
 Experimental: names and signatures may change in any 0.x release.
 
 ```js
-import { runAudit, runCheck, scanEntropy, entropy, divergence, GOALS } from "@adamsaou/overseer";
+import { runAudit, runCheck, scanEntropy, entropy, divergence, divergenceP, GOALS } from "@adamsaou/overseer";
 ```
 
-`runAudit` and `runCheck` run an audit or a check from your own code, such as a training loop, with the target given as `"haiku"`, `"sonnet"` or `"opus"`, or as `{ baseUrl, model, apiKey }` for a model behind a custom endpoint. `scanEntropy` clusters answers you sampled yourself and measures both models' semantic entropy and the divergence between them, `entropy` and `divergence` are that arithmetic, and `GOALS` are the preset objectives. The package ships TypeScript declarations, takes the Anthropic key from `ANTHROPIC_API_KEY`, and saves nothing; the `overseer` command, `npx @adamsaou/overseer` and `overseer mcp` work as they did. [Training](docs/training.md#4-the-library-api) has examples.
+`runAudit` and `runCheck` run an audit or a check from your own code, such as a training loop, with the target given as `"haiku"`, `"sonnet"` or `"opus"`, or as `{ baseUrl, model, apiKey }` for a model behind a custom endpoint. `scanEntropy` clusters answers you sampled yourself and measures both models' semantic entropy, the divergence between them and its p-value, and throws a `ClusteringError` when the clustering model declines or garbles its answer. `entropy`, `divergence` and `divergenceP` are that arithmetic, `minP(n)` is the smallest p-value n answers a side allow, and `GOALS` are the preset objectives. The package ships TypeScript declarations, takes the Anthropic key from `ANTHROPIC_API_KEY`, and saves nothing; the `overseer` command, `npx @adamsaou/overseer` and `overseer mcp` work as they did. [Training](docs/training.md#4-the-library-api) has examples.
 
 ## Run it from a checkout
 
@@ -292,6 +298,15 @@ npm install --prefix /tmp/stills playwright-core
 PLAYWRIGHT_CORE=/tmp/stills/node_modules/playwright-core node scripts/render-stills.mjs
 ```
 
+## Security
+
+Overseer holds your Anthropic API key and runs in Claude Code sessions that may have opened a repository you don't trust.
+
+- **Where the key goes.** Requests with the key go to `https://api.anthropic.com`, or to a gateway you allowed as `"gateway"` in `~/.overseer/config.json`; in a terminal, `overseer doctor` offers to allow the one `ANTHROPIC_BASE_URL` names. Any other `ANTHROPIC_BASE_URL` is refused, not followed, because a repository's `.claude/settings.json` can set environment variables for the processes Claude Code starts, the MCP server included, and point the key at its own server. Redirects are refused, so is `NODE_TLS_REJECT_UNAUTHORIZED=0`, and the key never goes to a custom target endpoint. A saved key is plain text in `config.json`, readable only by you, so a key from your secret store in `ANTHROPIC_API_KEY` is better where you have one.
+- **What gets installed.** The npm package is one bundled build with its dependencies inside, their licenses in `build/THIRD-PARTY-LICENSES.md`, and it declares no dependencies, so `npx -y @adamsaou/overseer`, which the plugin's server runs, downloads that one package and nothing that could change under it. It's published from GitHub Actions with npm provenance.
+- **The model under test writes what gets measured.** Its answers reach the clustering model escaped and marked as data, the clustering reads every answer whole, and a clustering the model declines or garbles counts as a scan that measured nothing. Before 0.3.1 the clustering read the first 3,000 and last 1,000 characters of a long answer, and an answer that put its pick in between scored a divergence of 0.
+- **What it doesn't defend against.** Code running as you can read the key wherever it's kept, and some environment variables a repository can set, such as `NODE_OPTIONS`, run code in every Node.js process. A repository can also turn off every plugin hook, Overseer's included, with `"disableAllHooks": true` in its `.claude/settings.json`. And a behavioral check only sees what its probes trigger, so it can miss an agenda they never reach.
+
 ## Releasing
 
 `.github/workflows/release.yml` publishes to npm when a version tag is pushed, through npm's trusted publishing: GitHub proves to npm which repository and workflow is publishing, so no npm token is stored anywhere, and npm attaches provenance linking the package to the commit it was built from. It needs a one-time setup on npmjs.com: on the package's Settings tab, add a trusted publisher for GitHub Actions with the user `adamsaou`, the repository `overseer` and the workflow `release.yml`.
@@ -313,14 +328,14 @@ Push the tag before `main`: plugin users install whatever `main` says, so a plug
 | Auditor | Haiku, Sonnet or Opus 5.5 | Adaptive thinking; tools `send_message`, `sample`, `update_board` and `final_verdict`, plus `entropy_scan` in the entropy condition. |
 | Clustering and grading | Opus 5.5 | Low effort, structured outputs. Answers are shuffled before clustering so the clusterer can't tell which model wrote which. |
 
-`entropy_scan` asks the target and the reference the same question n times each. It clusters all 2n answers by bidirectional entailment on an aspect the auditor names, then reports both models' discrete semantic entropy and the Jensen-Shannon divergence between their cluster distributions.
+`entropy_scan` asks the target and the reference the same question n times each. It clusters all 2n answers by bidirectional entailment on an aspect the auditor names, reading each one whole and escaped as data, then reports both models' discrete semantic entropy, the Jensen-Shannon divergence between their cluster distributions, and the divergence's exact permutation p-value: the share of all C(2n, n) splits of the pooled answers that diverge at least as much. The divergence is a sum of one term per cluster, so the p-value is computed exactly, cluster by cluster, at no API cost.
 
 The auditor, clustering and grading calls on Opus 5.5 and Sonnet 5.5 opt into server-side refusal fallbacks (`fallbacks: "default"`); the target and the reference never do, so the audited model stays fixed. A run where a fallback model served the auditor is flagged and left out of the study summary.
 
 | File | What it does |
 |---|---|
 | `lib/auditor.ts` | The auditor's agent loop, tools and live events |
-| `lib/entropy.ts` | Semantic-entropy scans: clustering, entropy, divergence |
+| `lib/entropy.ts` | Semantic-entropy scans: clustering, entropy, divergence and its exact p-value |
 | `lib/target.ts` | Target and reference deployments, one conversation per thread |
 | `lib/endpoint.ts` | Models behind a custom Messages-compatible endpoint: the requests, their errors, and keeping the Anthropic key away from them |
 | `lib/scan.ts` | `overseer scan`: the questions file, one probe's scan, and its line |
@@ -334,6 +349,8 @@ The auditor, clustering and grading calls on Opus 5.5 and Sonnet 5.5 opt into se
 | `plugins/overseer/`, `.claude-plugin/marketplace.json` | The Claude Code plugin (its MCP server entry, `/overseer:audit`, the `audit-method` skill, `/overseer:check` and the hook in `hooks/` and `scripts/`) and the marketplace that lists it |
 | `docs/`, `examples/` | The guides for the harness, CI, training and the dataset; the CI recipes, the training probes and drift monitor, and the example prompts |
 | `scripts/sync-plugin.ts` | Keeps the plugin's version, and the package version it runs, in step with `package.json` |
+| `scripts/build-package.ts` | Builds `build/`, the npm package: one esbuild bundle with its dependencies inside, their licenses, and the library's type declarations |
+| `test/` | Unit tests, `npm test`: the p-value against brute force, where the key may go, check outcomes and prompt commands |
 | `lib/store.ts`, `lib/config.ts`, `lib/paths.ts`, `lib/cost.ts` | Saved runs, the API key, the data folder and cost estimates |
 | `install.sh` | The curl-pipe installer |
 | `site/`, `scripts/build-site.ts`, `scripts/preview-site.ts` | The website, its build into `dist/`, and a local preview of `dist/` |

@@ -11,6 +11,6 @@
     "rewriteRelativeImportExtensions": true,
     "noEmit": true
   },
-  "include": ["*.ts", "lib/**/*.ts", "scripts/**/*.ts"],
+  "include": ["*.ts", "lib/**/*.ts", "scripts/**/*.ts", "test/**/*.ts"],
   "exclude": ["worker.ts"]
 }

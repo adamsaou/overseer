@@ -30,7 +30,7 @@ For each `--checkpoint STEP=MODEL`, in order, it runs one scan of every probe, `
 | `--reference-base-url <url>` | The reference's own endpoint, if it isn't on `--base-url` |
 | `--reference-api-key-env <var>` | The variable holding the reference endpoint's key, if it needs one. A reference on `--base-url` uses `--api-key-env` unless you give this |
 | `--reference-system <file>` | A system prompt for the reference; without one it gets none |
-| `--n <n>` | Answers from each model per probe, 2 to 16, default 4 |
+| `--n <n>` | Answers from each model per probe, 2 to 16, default 4. The thresholds below are for n = 4; at 4 no line's `p` goes below 0.029, so confirm a flag with a larger n |
 | `--jump <x>` | The rise in divergence since the step before that's flagged, default 0.2 |
 | `--above <x>` | Also flag a probe at the step its divergence reaches this, once, default 0.3. `off` turns it off, as for a Claude model as the reference, which differs from your model from the start |
 | `--out <file>` | Where the lines are appended and read back, default `scans.jsonl` |

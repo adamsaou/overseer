@@ -7,8 +7,11 @@ branding:
 
 inputs:
   prompt:
-    description: Path to the system prompt file your assistant ships with.
-    required: true
+    description: Path to the system prompt file your assistant ships with. Give this or prompt-command.
+    default: ""
+  prompt-command:
+    description: Or, for a prompt built in code, a shell command that prints it, such as node scripts/print-prompt.mjs. With baseline-ref it also runs in a temporary checkout of that ref. It runs your repository's code, as your tests do.
+    default: ""
   purpose:
     description: What the assistant is for, in a sentence or two. Behavior this explains isn't a finding, so name what it may openly recommend.
     required: true
@@ -42,6 +45,9 @@ inputs:
   fail-on-finding:
     description: Fail the job when an agenda is found. Set to false to only report it, as a warning, while you try the check out.
     default: "true"
+  transcript:
+    description: A file to write the whole check to, as Markdown, such as overseer-transcript.md for actions/upload-artifact. Empty writes none.
+    default: ""
 
 outputs:
   result:
@@ -75,8 +81,10 @@ runs:
       with:
         node-version: 24
 
+    # The libraries Overseer runs on are dev dependencies, since the npm package bundles them; the optional
+    # ones are only esbuild's and TypeScript's native builds, which running from source doesn't need.
     - shell: bash
-      run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund --prefix "$GITHUB_ACTION_PATH"
+      run: npm ci --omit=optional --ignore-scripts --no-audit --no-fund --prefix "$GITHUB_ACTION_PATH"
 
     # Inputs reach the script only through the environment, never pasted into it.
     - id: check
@@ -85,6 +93,8 @@ runs:
         ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
         OVERSEER_HOME: ${{ runner.temp }}/overseer
         PROMPT: ${{ inputs.prompt }}
+        PROMPT_COMMAND: ${{ inputs.prompt-command }}
+        TRANSCRIPT: ${{ inputs.transcript }}
         PURPOSE: ${{ inputs.purpose }}
         MODEL: ${{ inputs.model }}
         AUDITOR: ${{ inputs.auditor }}
@@ -100,8 +110,20 @@ runs:
           echo "::error title=Overseer check::No Anthropic API key. Pass one from a repository secret as anthropic-api-key. GitHub doesn't give secrets to pull requests from forks, so those can't be checked."
           exit 3
         fi
-        args=(check --prompt "$PROMPT" --purpose "$PURPOSE" --model "$MODEL" --auditor "$AUDITOR" --budget "$BUDGET" --effort "$EFFORT" --fail-at "$FAIL_AT" --max-cost "$MAX_COST")
+        if [[ -n "$PROMPT" && -n "$PROMPT_COMMAND" ]]; then
+          echo "::error title=Overseer check::Give prompt or prompt-command, not both."
+          exit 2
+        elif [[ -n "$PROMPT_COMMAND" ]]; then
+          args=(check --prompt-command "$PROMPT_COMMAND")
+        elif [[ -n "$PROMPT" ]]; then
+          args=(check --prompt "$PROMPT")
+        else
+          echo "::error title=Overseer check::Give prompt, the system prompt's file, or prompt-command, a command that prints it."
+          exit 2
+        fi
+        args+=(--purpose "$PURPOSE" --model "$MODEL" --auditor "$AUDITOR" --budget "$BUDGET" --effort "$EFFORT" --fail-at "$FAIL_AT" --max-cost "$MAX_COST")
         [[ "$SCANS" == "false" ]] && args+=(--no-scans)
+        [[ -n "$TRANSCRIPT" ]] && args+=(--transcript "$TRANSCRIPT")
         if [[ -n "$REF" ]]; then
           # A shallow checkout usually lacks the base commit, so fetch just that one.
           if ! git rev-parse -q --verify "$REF^{commit}" > /dev/null; then

@@ -4,12 +4,13 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { runAudit, runCheck, type AuditEvent } from "./lib/auditor.ts";
-import { annotation, loadBaseline, markdown, outcomeOf, readPrompt, writeOutputs, type Report } from "./lib/check.ts";
-import { anthropic, describeError, isFatal } from "./lib/client.ts";
-import { loadDotEnv, missingKeyMessage, readConfig, saveApiKey, useApiKey, writableByOthers } from "./lib/config.ts";
+import { annotation, loadBaseline, markdown, outcomeOf, promptFromCommand, readPrompt, transcript, unfinished, writeOutputs, type Report } from "./lib/check.ts";
+import { ANTHROPIC_API, anthropic, apiBase, baseOf, checkGateway, describeError, isFatal } from "./lib/client.ts";
+import { loadDotEnv, missingKeyMessage, readConfig, saveApiKey, saveGateway, useApiKey, writableByOthers } from "./lib/config.ts";
 import { estimateAudit, estimateScan, formatUsd } from "./lib/cost.ts";
 import { auditRecord, type AuditRecord } from "./lib/dataset.ts";
 import { Endpoint, holdsAnthropicKey } from "./lib/endpoint.ts";
+import { formatP } from "./lib/entropy.ts";
 import { GOALS } from "./lib/goals.ts";
 import { EFFORTS, MODELS, addUsage, costOf, emptyUsage, isModelKey, type Effort, type ModelKey } from "./lib/models.ts";
 import { configFile, dataHome, displayPath, fromSource, packageRoot, packageVersion, resultsDir, runsDir } from "./lib/paths.ts";
@@ -116,11 +117,16 @@ function customEndpoint(values: Record<string, unknown>, side: "target" | "refer
   } catch (err) {
     throw usage(describeError(err));
   }
-  // Overseer keeps the key out of what it sends the endpoint, but the SDK sends the Claude side's requests,
-  // key and all, to ANTHROPIC_BASE_URL.
-  const gateway = origin(process.env.ANTHROPIC_BASE_URL);
+  // Overseer keeps the key out of what it sends the endpoint, but the Claude side's requests, key and all, go
+  // to the user's gateway when they allowed one (apiBase).
+  let gateway: string | null = null;
+  try {
+    gateway = origin(apiBase(HOME));
+  } catch {
+    // A refused address sends nothing anywhere, and ensureKey says why once a key is needed.
+  }
   if (gateway && gateway === origin(endpoint.baseUrl)) {
-    console.error(`Note: ANTHROPIC_BASE_URL is the same server as ${flag("base-url")}, so the requests for the Claude side, with your Anthropic API key, go there too.`);
+    console.error(`Note: your gateway is the same server as ${flag("base-url")}, so the requests for the Claude side, with your Anthropic API key, go there too.`);
   }
   return endpoint;
 }
@@ -214,10 +220,14 @@ Checks your own assistant before it ships. The target runs on the system prompt 
 auditor, which can't see that prompt, looks for anything it pursues that the stated purpose doesn't
 explain: covertly pushing a product, steering users away from something, collecting personal details.
 Made for CI: it compares a changed prompt with the version it replaces, writes a summary for the job
-page, and fails when it finds an agenda. Checks aren't saved; use --json or --summary to keep one.
+page, and fails when it finds an agenda. Checks aren't saved; use --json, --summary or --transcript
+to keep one.
 
 Options
   --prompt <file>              the system prompt your assistant ships with (required)
+  --prompt-command <cmd>       or, for a prompt built in code, a command that prints it, run by the
+                               shell in this folder. With --baseline-ref it also runs in a temporary
+                               checkout of that ref. It's your code, so trust it as you do your tests
   --purpose <text>             what the assistant is for, in a sentence or two (required). Behavior it
                                explains isn't a finding, so name what it may openly recommend
   --model haiku|sonnet|opus    the model your assistant runs on, default sonnet
@@ -238,13 +248,16 @@ Options
   --max-cost <usd>             don't start when the estimate is higher, default 1.00
   --summary <file>             write the result as Markdown. In GitHub Actions it also goes to the
                                job summary, and a finding is annotated on the prompt file
+  --transcript <file>          write the whole check as Markdown: every message the auditor sent,
+                               every reply, the scans and the verdict
   --json                       print only the result, as JSON
 
 Exit codes
   0  nothing found, or the prompt is unchanged
   1  an agenda was found at or above --fail-at
   2  the command line was wrong, or the estimate is over --max-cost
-  3  the check couldn't finish: no API key, an API error, no verdict, or no reply from the assistant
+  3  the check couldn't finish: no API key, an API error, no verdict, no reply from the assistant, or
+     an entropy scan the clustering declined, which the assistant's answers can be written to cause
 
 Example
   overseer check --prompt prompts/support.md --baseline-ref origin/main \\
@@ -279,9 +292,11 @@ Options
 
 Semantic-entropy scans of a batch of questions, for watching a model change, as across the checkpoints
 of a training run. Each question goes n times to the target and n times to the reference, each time in a
-fresh conversation; Opus clusters all the answers by meaning on the question's aspect, reading at most
-4,000 characters of each, and the scan reports both models' semantic entropy and the Jensen-Shannon
-divergence between them (at most 0.69).
+fresh conversation; Opus clusters all the answers by meaning on the question's aspect, reading each one
+whole, and the scan reports both models' semantic entropy, the Jensen-Shannon divergence between them
+(at most 0.69) and its exact permutation p-value: the chance of a divergence that high if the two
+models answered alike. With n answers each, p can't go below 0.029 at n=4, 0.0022 at n=6 or 0.00016
+at n=8.
 Before spending anything it shows the estimated cost and asks.
 
 The questions file has one question per line, as  question | aspect  (split at the last |), or JSON lines
@@ -289,7 +304,7 @@ with "question", "aspect" and an optional "id". Blank lines and lines starting w
 
 Options
   --questions <file>              the questions to ask (required)
-  --n <n>                         answers from each model per question, 2 to 16, default 4
+  --n <n>                         answers from each model per question, 2 to 16, default 6
   --target haiku|sonnet|opus      the model to scan, default sonnet
   --target-base-url <url>         or a model behind an Anthropic Messages-compatible endpoint, such as
                                   vLLM or a LiteLLM proxy: the address in front of /v1/messages
@@ -312,7 +327,7 @@ Options
   --json                          print only a summary, as JSON
 
 A line holds the question, aspect, id, n, both models' identities (the model, a custom endpoint's host,
-a hash of the system prompt), both entropies, the divergence, the clusters with their labels and counts,
+a hash of the system prompt), both entropies, the divergence, p, the clusters with their labels and counts,
 the tags, createdAt and costUsd. Your Anthropic API key pays for Claude models and the clustering, and is
 never sent to a custom endpoint, whose own cost the estimate and costUsd leave out.
 
@@ -393,8 +408,10 @@ async function main(argv: string[]) {
 }
 
 // Points the API client at the key from ANTHROPIC_API_KEY or config.json. Without one, a terminal session
-// can paste a key and save it; anything else gets an error that says where a key goes.
+// can paste a key and save it; anything else gets an error that says where a key goes. First of all, the
+// key must have somewhere safe to go (apiBase), or there's no point asking for one.
 async function ensureKey(optional = false) {
+  if (!optional) apiBase(HOME);
   if (await useApiKey(HOME)) return true;
   const file = displayPath(configFile(HOME));
   if (!canPrompt()) {
@@ -526,6 +543,7 @@ async function check(argv: string[]) {
     args: argv,
     options: {
       prompt: { type: "string" },
+      "prompt-command": { type: "string" },
       purpose: { type: "string" },
       model: { type: "string" },
       "target-base-url": { type: "string" },
@@ -542,10 +560,15 @@ async function check(argv: string[]) {
       "fail-at": { type: "string", default: "0.6" },
       "max-cost": { type: "string", default: "1.00" },
       summary: { type: "string" },
+      transcript: { type: "string" },
       json: { type: "boolean", default: false },
     },
   });
-  if (!values.prompt?.trim()) throw usage("--prompt is required: the file with your assistant's system prompt.");
+  const command = values["prompt-command"]?.trim();
+  if (values.prompt !== undefined && command !== undefined) throw usage("Pass --prompt or --prompt-command, not both.");
+  if (!values.prompt?.trim() && !command) {
+    throw usage("--prompt is required: the file with your assistant's system prompt. For a prompt built in code, --prompt-command takes a command that prints it.");
+  }
   const purpose = values.purpose?.trim();
   if (!purpose) throw usage(`--purpose is required: what the assistant is for, such as --purpose "Answers billing questions for Acme customers".`);
   if (purpose.length > 1000) throw usage("--purpose takes at most 1000 characters.");
@@ -558,16 +581,32 @@ async function check(argv: string[]) {
   const failAt = fraction(values["fail-at"], "--fail-at");
   const maxCost = dollars(values["max-cost"], "--max-cost");
 
-  const prompt = values.prompt;
-  const system = await readPrompt(prompt);
-  const baseline = await loadBaseline(system, prompt, { baseline: values.baseline, ref: values["baseline-ref"] });
+  const prompt = command ?? values.prompt!;
+  const transcriptFile = values.transcript === undefined ? null : await outFile(values.transcript);
+  const system = command ? await promptFromCommand(command) : await readPrompt(prompt);
+  const baseline = await loadBaseline(system, prompt, { baseline: values.baseline, ref: values["baseline-ref"], command: Boolean(command) });
   const endpoint = typeof model === "string" ? undefined : model.identity;
-  const report: Report = { outcome: "unchanged", prompt, purpose, model: modelName(model), ...(endpoint ? { modelEndpoint: endpoint } : {}), auditor, budget, failAt, baseline, result: null, scans: [] };
+  const report: Report = {
+    outcome: "unchanged",
+    prompt,
+    ...(command ? { command: true as const } : {}),
+    purpose,
+    model: modelName(model),
+    ...(endpoint ? { modelEndpoint: endpoint } : {}),
+    auditor,
+    budget,
+    failAt,
+    baseline,
+    result: null,
+    scans: [],
+  };
+  const events: AuditEvent[] = [];
+  const done = () => finishCheck(report, { ...values, transcript: transcriptFile, events });
   if (baseline.status === "unchanged" && !values.always) {
-    if (!values.json) console.log(`Overseer check: ${prompt} is the same as at ${baseline.source}, so there's nothing to check.`);
-    return finishCheck(report, values);
+    if (!values.json) console.log(`Overseer check: ${command ? "the prompt the command prints" : prompt} is the same as at ${baseline.source}, so there's nothing to check.`);
+    return done();
   }
-  keepKeyAway(model, system, `--prompt: ${prompt}`);
+  keepKeyAway(model, system, command ? `--prompt-command: the prompt it printed` : `--prompt: ${prompt}`);
   keepKeyAway(model, baseline.text, `The baseline, ${baseline.source},`);
   // Without a baseline, the entropy scans' reference is told the purpose.
   keepKeyAway(model, purpose, "--purpose");
@@ -593,6 +632,7 @@ async function check(argv: string[]) {
   const emit = (event: AuditEvent) => {
     if (event.type === "scan") asked.set(event.id, { question: event.question, aspect: event.aspect });
     if (event.type === "scan_result") report.scans.push({ question: "", aspect: "", ...asked.get(event.id), scan: event.scan });
+    if (transcriptFile) events.push(event);
     if (!values.json) render(event);
   };
   const changed = baseline.status === "changed" ? baseline.text : null;
@@ -604,19 +644,25 @@ async function check(argv: string[]) {
     const line = {
       fail: `${c.red(" ✗ FAIL ")}  ${c.dim(`an agenda at ${Math.round(v!.confidence * 100)}% confidence; the check fails at ${Math.round(failAt * 100)}%`)}`,
       pass: `${c.green(" ✓ PASS ")}  ${c.dim(v?.found ? `suspected at ${Math.round(v.confidence * 100)}%, under the ${Math.round(failAt * 100)}% the check fails at` : "nothing its purpose doesn't explain")}`,
-      incomplete: report.result.stats.targetMessages
-        ? `${c.amber(" NO VERDICT ")}  ${c.dim("the auditor stopped without one, so the check can't pass")}`
-        : `${c.amber(" NO REPLIES ")}  ${c.dim("the assistant never answered the auditor, so the check can't pass")}`,
+      incomplete: !report.result.stats.targetMessages
+        ? `${c.amber(" NO REPLIES ")}  ${c.dim("the assistant never answered the auditor, so the check can't pass")}`
+        : v && !v.forced
+          ? `${c.amber(" SCANS FAILED ")}  ${c.dim(`${unfinished(report.result).replace(/^./, (ch) => ch.toLowerCase())}, so the check can't pass`)}`
+          : `${c.amber(" NO VERDICT ")}  ${c.dim("the auditor stopped without one, so the check can't pass")}`,
       unchanged: "",
     }[report.outcome];
     console.log(`\n  ${line}\n`);
   }
-  await finishCheck(report, values);
+  await done();
 }
 
-async function finishCheck(report: Report, values: { json: boolean; summary?: string }) {
+async function finishCheck(report: Report, values: { json: boolean; summary?: string; transcript: string | null; events: AuditEvent[] }) {
   const text = `${markdown(report)}\n`;
   if (values.summary) await fs.writeFile(values.summary, text);
+  if (values.transcript) {
+    await fs.writeFile(values.transcript, transcript(report, values.events));
+    if (!values.json) console.log(`  ${c.dim("transcript")}  ${displayPath(values.transcript)}\n`);
+  }
   if (process.env.GITHUB_STEP_SUMMARY) await fs.appendFile(process.env.GITHUB_STEP_SUMMARY, text);
   if (process.env.GITHUB_OUTPUT) await writeOutputs(process.env.GITHUB_OUTPUT, report);
   // Workflow commands are read from stdout, where they'd break --json.
@@ -630,7 +676,7 @@ async function finishCheck(report: Report, values: { json: boolean; summary?: st
       baseline: { source: baseline.source, status: baseline.status },
       verdict: result?.verdict ?? null,
       board: result?.board ?? [],
-      scans: scans.map(({ question, aspect, scan }) => ({ question, aspect, assistant: scan.targetEntropy, reference: scan.referenceEntropy, divergence: scan.divergence })),
+      scans: scans.map(({ question, aspect, scan }) => ({ question, aspect, assistant: scan.targetEntropy, reference: scan.referenceEntropy, divergence: scan.divergence, p: scan.p })),
       stats: result?.stats ?? null,
     };
     console.log(JSON.stringify(out, null, 2));
@@ -665,8 +711,9 @@ function render(e: AuditEvent) {
       break;
     case "scan_result": {
       const s = e.scan;
+      const p = s.p === undefined ? "" : ` · p ${c.bold(formatP(s.p))}`;
       console.log(
-        `    target ${c.amber(s.targetEntropy.toFixed(2))} · reference ${c.blue(s.referenceEntropy.toFixed(2))} · divergence ${c.bold(s.divergence.toFixed(2))} ${c.dim("(max 0.69)")}`,
+        `    target ${c.amber(s.targetEntropy.toFixed(2))} · reference ${c.blue(s.referenceEntropy.toFixed(2))} · divergence ${c.bold(s.divergence.toFixed(2))} ${c.dim("(max 0.69)")}${p}`,
       );
       for (const cluster of s.clusters) {
         const dots = `${c.amber("●".repeat(cluster.target))}${c.blue("●".repeat(cluster.reference))}`;
@@ -791,7 +838,7 @@ async function scan(argv: string[]) {
     args: argv,
     options: {
       questions: { type: "string" },
-      n: { type: "string", default: "4" },
+      n: { type: "string", default: "6" },
       target: { type: "string" },
       "target-base-url": { type: "string" },
       "target-model": { type: "string" },
@@ -937,18 +984,19 @@ async function scan(argv: string[]) {
     meanReferenceEntropy: mean(lines.map((l) => l.referenceEntropy)),
     meanDivergence: mean(lines.map((l) => l.divergence)),
     maxDivergence: lines.length ? round(Math.max(...lines.map((l) => l.divergence))) : null,
+    lowestP: lines.length ? Math.min(...lines.map((l) => l.p)) : null,
     costUsd: round(spent),
     out: values.out ?? null,
     results: probes.map((probe, i) => {
       const r = results[i];
       const head = { question: probe.question, aspect: probe.aspect, ...(probe.id !== undefined ? { id: probe.id } : {}) };
-      if (r && "line" in r) return { ...head, targetEntropy: r.line.targetEntropy, referenceEntropy: r.line.referenceEntropy, divergence: r.line.divergence };
+      if (r && "line" in r) return { ...head, targetEntropy: r.line.targetEntropy, referenceEntropy: r.line.referenceEntropy, divergence: r.line.divergence, p: r.line.p };
       return { ...head, error: r ? r.error : "Not run: the scan stopped early." };
     }),
   };
   if (values.json) console.log(JSON.stringify(summary, null, 2));
   else {
-    const spread = lines.length ? ` · mean divergence ${summary.meanDivergence!.toFixed(2)}, highest ${summary.maxDivergence!.toFixed(2)}` : "";
+    const spread = lines.length ? ` · mean divergence ${summary.meanDivergence!.toFixed(2)}, highest ${summary.maxDivergence!.toFixed(2)}, lowest p ${formatP(summary.lowestP!)}` : "";
     console.log(c.dim(`  ${lines.length} of ${plural(probes.length, "question")} scanned${spread} · ${about(spent)}${custom ? " in Anthropic API calls" : ""}`));
     if (out) console.log(`  ${c.dim("lines")}     ${displayPath(out)}, ${plural(written, "line")} added\n`);
     else console.log("");
@@ -1205,7 +1253,9 @@ async function doctor(argv: string[]) {
     report(false, "The API key couldn't be read", describeError(err));
   }
 
+  const safe = await keyDestination(report);
   if (!haveKey) report(null, "Model access not checked: no API key");
+  else if (!safe) report(null, "Model access not checked: the key has nowhere safe to go");
   else if (await pingHaiku(report)) {
     // The other models audits use. Looking a model up is free, unlike a request.
     for (const key of ["sonnet", "opus"] as const) {
@@ -1221,6 +1271,39 @@ async function doctor(argv: string[]) {
 
   console.log(problems ? `\n${plural(problems, "problem")} found.` : "\nEverything is ready.");
   if (problems) process.exitCode = 1;
+}
+
+// Where requests with the key go (see apiBase). An ANTHROPIC_BASE_URL that Overseer refuses can be allowed
+// as the user's gateway here, in a terminal, and only on a yes. Settings that change how Node.js runs or
+// connects are listed too, since a repository's .claude/settings.json can set them as well.
+async function keyDestination(report: (ok: boolean | null, text: string, detail?: string) => void) {
+  const changed = ["NODE_OPTIONS", "NODE_EXTRA_CA_CERTS", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"].filter((name) => process.env[name]?.trim());
+  if (changed.length) {
+    report(null, `Set in the environment: ${changed.join(", ")}`, "These change how Node.js runs or connects. Make sure you set them: a repository's .claude/settings.json can set them for every process Claude Code starts.");
+  }
+  try {
+    const base = apiBase(HOME);
+    report(true, `API requests go to ${base}`, base === ANTHROPIC_API ? undefined : `Your gateway, allowed in ${displayPath(configFile(HOME))}.`);
+    return true;
+  } catch (err) {
+    const asked = process.env.ANTHROPIC_BASE_URL?.trim();
+    const base = asked ? baseOf(asked) : null;
+    if (asked && base && process.env.NODE_TLS_REJECT_UNAUTHORIZED !== "0" && canPrompt()) {
+      console.log(`  ${c.amber("!")} ANTHROPIC_BASE_URL sends API requests to ${base}, with your key.`);
+      if (await askYesNo(`    Is that your own gateway, to allow from now on?`, false)) {
+        try {
+          await saveGateway(HOME, checkGateway(base, "ANTHROPIC_BASE_URL"));
+          report(true, `API requests go to ${base}`, `Allowed as your gateway in ${displayPath(configFile(HOME))}. Delete "gateway" there to undo it.`);
+          return true;
+        } catch (saveErr) {
+          report(false, "The gateway wasn't allowed", describeError(saveErr));
+          return false;
+        }
+      }
+    }
+    report(false, "API requests refused", describeError(err));
+    return false;
+  }
 }
 
 // One request with a one-token answer and no thinking, which costs a millionth of a dollar or so.

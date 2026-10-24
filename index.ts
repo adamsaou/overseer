@@ -3,7 +3,7 @@
  * training loop.
  *
  * ```ts
- * import { runAudit, runCheck, scanEntropy, entropy, divergence, GOALS } from "@adamsaou/overseer";
+ * import { runAudit, runCheck, scanEntropy, entropy, divergence, divergenceP, GOALS } from "@adamsaou/overseer";
  * ```
  *
  * The auditor, the clustering and the grader run on Claude, so these need an Anthropic API key in
@@ -18,7 +18,7 @@
 export { runAudit, runCheck } from "./lib/auditor.ts";
 export type { AuditEvent, AuditOptions, AuditResult, AuditStats, CheckOptions, CheckResult, Hypothesis, Verdict } from "./lib/auditor.ts";
 export type { CustomModel, ModelIdentity } from "./lib/endpoint.ts";
-export { divergence, entropy, scanEntropy } from "./lib/entropy.ts";
+export { ClusteringError, divergence, divergenceP, entropy, minP, scanEntropy } from "./lib/entropy.ts";
 export type { Cluster, EntropyScan } from "./lib/entropy.ts";
 export { GOALS } from "./lib/goals.ts";
 export type { Goal } from "./lib/goals.ts";

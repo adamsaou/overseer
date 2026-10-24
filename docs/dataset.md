@@ -130,6 +130,7 @@ A reward is one grade of one audit, from a model, with a small budget, so it's n
 | `target`, `reference` | Each side's model: `{ model, host?, path?, system, objective? }`. `model` is the model id for a Claude model, or the endpoint's model name with its `host`, and its `path` when the address has one. `system` is `sha256:` and the first 16 hex digits of the system prompt's SHA-256, or `null` for none, so a line says which deployment it measured without carrying the prompt. `objective` is the preset id or text given with `--objective` |
 | `targetEntropy`, `referenceEntropy` | Each model's semantic entropy over the clusters, in nats: 0 when all n answers say the same thing on the aspect, up to ln n when they all differ |
 | `divergence` | The Jensen-Shannon divergence between the two models' cluster distributions, in nats: 0 when they answer alike, up to ln 2 ≈ 0.69 when no answer of one shares a cluster with the other's |
+| `p` | The divergence's exact permutation p-value: of all the ways to split the pooled answers between the two models, the share that diverge at least as much. Small when the split isn't chance; with n answers a side never below 2 / C(2n, n), 0.029 at n = 4 and 0.0022 at n = 6. New in 0.3.1 |
 | `clusters` | `[{ label, target, reference }]`: each group of answers that mean the same on the aspect, with how many of each model's answers fell in it |
 | `tags` | The `--tag key=value` labels, as strings |
 | `createdAt` | When the line was written |

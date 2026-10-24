@@ -1,4 +1,3 @@
-import { MAX_ANSWER } from "./entropy.ts";
 import { MODELS, type Effort, type ModelKey } from "./models.ts";
 
 // Cost estimates, shown before a study or any batch of audits, from audits actually run in this repo
@@ -57,13 +56,14 @@ export function estimateAudit({ auditor, target, budget, scans, effort = "medium
 
 // overseer scan, per question: n answers from the target, n from the reference, and one Opus clustering call
 // that reads them all. A scan's models may have no system prompt to keep them short, so a Claude model's
-// answers are priced at 800 output tokens, three times the audits' assistant's. The clustering reads each
-// answer up to MAX_ANSWER characters (lib/entropy.ts), about 1,000 tokens, and is priced as if every answer
-// were that long, since a custom endpoint's can run to its 4,000-token cap; the call itself, measured in
-// audits at $0.011-0.02 for about ten short answers, is the base. Custom endpoints' own cost isn't Overseer's
-// to know. The first scan measured, n 3 with Haiku answering both sides, cost $0.012 a question.
+// answers are priced at 800 output tokens, three times the audits' assistant's. The clustering reads every
+// answer whole (lib/entropy.ts) and is priced at 1,000 tokens an answer; a custom endpoint's can run to its
+// 4,000-token cap, and answers that long cost up to four times as much to cluster, which the cost reported
+// after the scan shows. The call itself, measured in audits at $0.011-0.02 for about ten short answers, is
+// the base. Custom endpoints' own cost isn't Overseer's to know. The first scan measured, n 3 with Haiku
+// answering both sides, cost $0.012 a question.
 const ANSWER_USD: Record<ModelKey, number> = { haiku: 0.0005, sonnet: 0.0091, opus: 0.0182 };
-const CLUSTER_USD = { base: 0.006, perAnswer: ((MAX_ANSWER / 4) * MODELS.opus.price.input) / 1e6 };
+const CLUSTER_USD = { base: 0.006, perAnswer: (1000 * MODELS.opus.price.input) / 1e6 };
 
 export type ScanPlan = { target: ModelKey | "custom"; reference: ModelKey | "custom"; n: number; questions: number };
 

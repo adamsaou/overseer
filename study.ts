@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { runAudit } from "./lib/auditor.ts";
-import { describeError, isFatal } from "./lib/client.ts";
+import { apiBase, describeError, isFatal } from "./lib/client.ts";
 import { missingKeyMessage, useApiKey } from "./lib/config.ts";
 import { GRADE_USD, estimateAudits, formatUsd, type Estimate } from "./lib/cost.ts";
 import { GOALS, type Goal } from "./lib/goals.ts";
@@ -328,6 +328,7 @@ async function run(options: StudyOptions, rows: Row[], file: string, home: strin
   const rough = estimate.measured ? "" : " Some of these matchups or settings haven't been measured yet, so the estimate errs high.";
   if (jobs.length) log(`Estimated cost: about ${formatUsd(estimate.usd)}.${rough}`);
   if (!(await useApiKey(home))) throw new Error(missingKeyMessage(home));
+  apiBase(home);
   if (confirm && !(await confirm({ audits: jobs.length, regrades: regrades.length, estimate }))) {
     log("Cancelled. Nothing was run.");
     return null;

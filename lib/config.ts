@@ -9,7 +9,8 @@ import { configFile, defaultHome, fromSource, packageRoot } from "./paths.ts";
 // a CI secret always applies; otherwise <home>/config.json, which only the user can read. The key is never
 // printed, logged or put in an error message.
 
-export type Config = { apiKey?: string };
+// gateway is an LLM gateway the key may go to instead of the Anthropic API; see apiBase in client.ts.
+export type Config = { apiKey?: string; gateway?: string };
 export type KeySource = "env" | "config";
 
 // Writes contents that only the current user can read, also over an existing file. A new temp file is
@@ -96,6 +97,11 @@ export async function saveApiKey(home: string, key: string) {
   // Like ~/.ssh, the default folder, which also holds the saved runs, is made private again if something
   // loosened it. A folder the user chose (OVERSEER_HOME, a checkout) keeps its mode; see writableByOthers.
   if (process.platform !== "win32" && home === defaultHome()) await fs.chmod(home, 0o700);
+}
+
+// Unlike a key, a gateway isn't saved over a damaged config.json, which may still hold the key.
+export async function saveGateway(home: string, base: string) {
+  await writeConfig(home, { ...(await readConfig(home)), gateway: base });
 }
 
 // Whether other users could replace or delete files in this folder, such as the saved key. The sticky

@@ -3,8 +3,9 @@
   "compilerOptions": {
     "noEmit": false,
     "declaration": true,
+    "emitDeclarationOnly": true,
     "rootDir": ".",
     "outDir": "build"
   },
-  "include": ["bin.ts", "index.ts", "cli.ts", "mcp.ts", "study.ts", "lib/**/*.ts"]
+  "include": ["index.ts"]
 }

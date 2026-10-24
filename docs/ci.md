@@ -35,6 +35,25 @@ jobs:
 
 The action compares with the pull request's base commit, fails the job on a finding, annotates the prompt file and writes the verdict to the job summary. [Its inputs and outputs](../README.md#github-actions) are in the README.
 
+To keep the whole conversation, every message the auditor sent and every reply, give the action a `transcript` file and upload it, also when the check fails:
+
+```yaml
+      - uses: adamsaou/overseer@main
+        with:
+          prompt: prompts/support.md
+          purpose: Answers billing and account questions for Acme, and may recommend Acme's own plans.
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          transcript: overseer-transcript.md
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: overseer-transcript
+          path: overseer-transcript.md
+          if-no-files-found: ignore
+```
+
+For a prompt built in code, give `prompt-command` instead of `prompt`: a shell command that prints the prompt, such as `node scripts/print-prompt.mjs`. On a pull request it runs twice, in the pull request's checkout and in a temporary checkout of the base commit, so it runs the pull request's code, as its tests do.
+
 ## GitLab CI
 
 [`examples/ci/gitlab-ci.yml`](../examples/ci/gitlab-ci.yml) is one job to copy into your `.gitlab-ci.yml`:
@@ -89,18 +108,19 @@ npx -y @adamsaou/overseer@0.3.0 check --prompt prompts/support.md \
   --baseline-ref FETCH_HEAD --summary overseer-check.md
 ```
 
-`--baseline-ref` takes any git ref or commit the clone has, such as the target branch of a pull request, which most CI systems put in an environment variable of their own. `--baseline <file>` compares with a file instead, and with neither, the check compares the prompt with its stated purpose alone. It prints the live readout of the audit and then `✓ PASS` or `✗ FAIL`; `--summary <file>` writes the result as Markdown for the job page, and `--json` prints it as JSON instead of the readout.
+`--baseline-ref` takes any git ref or commit the clone has, such as the target branch of a pull request, which most CI systems put in an environment variable of their own. `--baseline <file>` compares with a file instead, and with neither, the check compares the prompt with its stated purpose alone. It prints the live readout of the audit and then `✓ PASS` or `✗ FAIL`; `--summary <file>` writes the result as Markdown for the job page, `--transcript <file>` writes the whole conversation as Markdown, and `--json` prints the result as JSON instead of the readout. `--prompt-command <cmd>` takes a command that prints the prompt instead of `--prompt`, for one built in code.
 
 | Exit code | |
 |---|---|
 | 0 | Nothing found, or the prompt is unchanged |
 | 1 | An agenda found with at least `--fail-at` confidence (default 0.6) |
 | 2 | A wrong flag, or an estimate over `--max-cost` (default $1.00), refused before anything is spent |
-| 3 | The check couldn't finish: no API key, an API error, an auditor that stopped without a verdict, or an assistant that never answered the auditor, none of which counts as a pass |
+| 3 | The check couldn't finish: no API key, a key with nowhere safe to go, an API error, an auditor that stopped without a verdict, an assistant that never answered the auditor, or an entropy scan whose clustering failed, none of which counts as a pass |
 
 - **Pin a version** you've tried, as above, so a check doesn't change under you between runs. The recipes on this page pin the version they were written for, and `npm version` moves them with each release.
 - **Cost.** Sonnet auditing Sonnet at the defaults cost $0.10 to $0.14 a check on the example prompts, and Haiku auditing Haiku $0.003 to $0.02; the estimate shown before it starts errs high, $0.28 for the defaults. An unchanged prompt costs nothing and needs no key, which also makes it a free test of the wiring.
-- **Nothing is saved.** Checks don't write to Overseer's data folder; keep the summary or the JSON as the job's artifact.
+- **Nothing is saved.** Checks don't write to Overseer's data folder; keep the summary, the transcript or the JSON as the job's artifact.
+- **A gateway.** If your CI reaches the Anthropic API through an LLM gateway, Overseer won't follow `ANTHROPIC_BASE_URL` to it until you allow it: in an earlier step, write `{"gateway": "https://your-gateway.example.com"}` to `config.json` in Overseer's data folder, which is `$RUNNER_TEMP/overseer` for the action and `$OVERSEER_HOME` or `~/.overseer` for the command. Without that, the check stops with exit code 3 before sending the key anywhere.
 - **Your own model.** If the assistant runs on a model of yours behind an Anthropic Messages-compatible endpoint, check it there with `--target-base-url <url> --target-model <name>`, and `--target-api-key-env <var>` if the endpoint needs a key; these flags are new in 0.2.0. Your Anthropic key is never sent to it, and a prompt that holds the key is refused. [Training](training.md#serving-a-checkpoint) has the details.
 
 ## A git pre-push hook
