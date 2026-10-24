@@ -4,7 +4,7 @@
       "command": "npx",
       "args": [
         "-y",
-        "@adamsaou/overseer@0.3.1",
+        "@adamsaou/overseer@0.4.0",
         "mcp"
       ]
     }

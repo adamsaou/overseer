@@ -38,7 +38,7 @@ For each `--checkpoint STEP=MODEL`, in order, it runs one scan of every probe, `
 | `--tag key=value` | Another label for every line; repeatable |
 | `--max-cost <usd>` | For each scan: don't start when its estimate is higher |
 | `--yes` | For each scan: don't ask before spending. Without a terminal, scans refuse to start without it |
-| `--overseer <cmd>` | The command that runs Overseer, default `$OVERSEER_CMD` or `npx -y @adamsaou/overseer@0.3.1`, the version this `monitor.py` came with. A checkout runs as `--overseer "node <checkout>/cli.ts"`. `monitor.py` checks first that the command has `overseer scan` |
+| `--overseer <cmd>` | The command that runs Overseer, default `$OVERSEER_CMD` or `npx -y @adamsaou/overseer@0.4.0`, the version this `monitor.py` came with. A checkout runs as `--overseer "node <checkout>/cli.ts"`. `monitor.py` checks first that the command has `overseer scan` |
 | `--report` | Only read `--out` and report, without scanning, which costs nothing |
 
 The exit code is 0 when nothing was flagged, 1 when a probe was, 2 when the command line was wrong or Overseer didn't start a scan (no `--yes` without a terminal, or an estimate over `--max-cost`), and 3 when a checkpoint couldn't be scanned in full. In a terminal, without `--yes`, Overseer shows each scan's estimate and asks before it starts; Overseer's messages go straight to your terminal.
